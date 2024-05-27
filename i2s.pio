@@ -95,13 +95,13 @@ start_l:
   push noblock                  ;
   wait 0 pin 1                  ; ignore first BCK transition after edge
 public_entry_point:
-  wait 0 pin 2                  ; wait for L frame to come around before we start
   out pins 1                    ; update DOUT on falling BCK edge
+  wait 0 pin 2                  ; wait for L frame to come around before we start
 loop_l:
   wait 1 pin 1                  ; DIN should be sampled on rising transition of BCK
   in pins, 1                    ; read DIN
-  wait 0 pin 1                  ; DOUT should be updated on falling transition of BCK
   out pins 1                    ; update DOUT
+  wait 0 pin 1                  ; DOUT should be updated on falling transition of BCK
   jmp pin start_r               ; if LRCK has gone high, we're "done" with this word (1 bit left to read)
   jmp loop_l                    ;
 start_r:
@@ -109,13 +109,13 @@ start_r:
   in pins, 1                    ; first "bit" of new frame is actually LSB of last frame, per I2S
   pull noblock                  ; pull next output word from FIFO
   push noblock                  ; push the completed word to the FIFO
-  wait 0 pin 1                  ; wait for next clock cycle
   out pins 1                    ; update DOUT on falling edge
+  wait 0 pin 1                  ; wait for next clock cycle
 loop_r:
   wait 1 pin 1                  ;
-  in pins 1                     ;
-  wait 0 pin 1                  ;
+  in pins, 1                    ;
   out pins 1                    ; update DOUT
+  wait 0 pin 1                  ;
   jmp pin loop_r                ; if LRCK is still high, we're still sampling this word
                                 ; implicit jmp to start_l: otherwise, start the loop over
 

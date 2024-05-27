@@ -56,8 +56,8 @@ static void process_audio(const int32_t* input, int32_t* output, size_t num_fram
     {
         output[2*i]   = input[2*i];
         output[2*i+1] = input[2*i+1];
-        output[2*i]   = x;
-        output[2*i+1] = x++;
+        output[2*i]   = 0b00000000000000000000000000000001;
+        output[2*i+1] = 0b11111111111111111111111111111110;
     }
 }
 
@@ -127,7 +127,7 @@ int main() {
     // Note: it is usually best to configure the codec here, and then enable it
     //       after starting the I2S clocks, below.
 
-    i2s_program_start_synched(pio0, &i2s_config_default, dma_i2s_in_handler, &i2s);
+    i2s_program_start_slaved(pio0, &i2s_config_default, dma_i2s_in_handler, &i2s);
 
     // Enable the (already configured) codec here.
 
