@@ -48,7 +48,7 @@ include(pico_sdk_import.cmake)
 project(i2s_example C CXX ASM)
 pico_sdk_init()
 
-add_executable(i2s_example i2s.c)
+add_executable(i2s_example)
 
 pico_generate_pio_header(i2s_example ${CMAKE_CURRENT_LIST_DIR}/i2s.pio)
 
