@@ -64,18 +64,28 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 // 
 
 #define     REG_VOLTAGE     VREG_VOLTAGE_1_20                               // Voltage regulator setting            
-#define     CLK_SYS         (288000000L)                                    // The system clock frequency
+//#define     CLK_SYS         (288000000L)                                    // The system clock frequency
+//#define     CLK_SYS           (295200000L)
+#define     CLK_SYS             (196800000L)
+
 #define     CLK_I2S         (48000)                                         // Single rate I2S frequency
-#define     CLK_PIO         (2*CLK_I2S*64*2*8)                              // PIO execution rate (8 cycles each half bit of 2XI2S)
+#define     CLK_PIO         (2*CLK_I2S*64*2*16)                             // PIO execution rate (8 cycles each half bit of 2XI2S)
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
 #define     CLK_PIO_DIF_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
 
 int main() 
 {
     vreg_set_voltage(REG_VOLTAGE);
+    stdio_init_all();
+    
+    uint vco, postdiv1, postdiv2;
+    int ret = check_sys_clock_khz(CLK_SYS/1000, &vco, &postdiv1, &postdiv2);
+    printf("\n\nCHECKING CLOCK    %10ld %d %d %d %d\n", CLK_SYS, ret, vco, postdiv1, postdiv2);
+
     set_sys_clock_khz(CLK_SYS/1000, true);
     stdio_init_all();
 
+    printf("\n\n\n\n");
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
     printf("SYSTEM CLOCK ACTUAL:        %10ld\n\n", clock_get_hz(clk_sys));
 
@@ -97,19 +107,28 @@ int main()
     // Bidirection slave clocked with the fast clock
     uint8_t sm0    = pio_claim_unused_sm(pio0_hw, true);
     uint    offset = pio_add_program    (pio0_hw, &i2s_duplex_program);
-    pio_sm_set_clkdiv_int_frac          (pio0_hw, sm0, 1, 0);
-    pio_sm_set_clkdiv_int_frac          (pio1_hw, sm0, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
+    i2s_duplex_init                     (pio0_hw, sm0, offset, 12);
+    pio_sm_set_clkdiv_int_frac          (pio0_hw, sm0, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
 
-    // Double rate master creating its own clock
+    // Double rate clock generation
     uint8_t sm1    = pio_claim_unused_sm(pio1_hw, true);
-    offset         = pio_add_program    (pio1_hw, &i2s_double_program);
-    i2s_double_init                     (pio1_hw, sm1, offset, I2S_BASE);
+    offset         = pio_add_program    (pio1_hw, &i2s_double_clk_program);
+    i2s_double_clk_init                 (pio1_hw, sm1, offset, I2S_BASE);
     pio_sm_set_clkdiv_int_frac          (pio1_hw, sm1, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
+
+    // Double rate master data out
+    uint8_t sm2    = pio_claim_unused_sm(pio1_hw, true);
+    offset         = pio_add_program    (pio1_hw, &i2s_double_program);
+    i2s_double_init                     (pio1_hw, sm2, offset, I2S_BASE);
+    pio_sm_set_clkdiv_int_frac          (pio1_hw, sm2, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
+
+
+
 
 //  dma_double_buffer_init(i2s, dma_handler);
     
     pio_enable_sm_mask_in_sync(pio0_hw, (1u << sm0));
-    pio_enable_sm_mask_in_sync(pio1_hw, (1u << sm1));
+    pio_enable_sm_mask_in_sync(pio1_hw, (1u << sm1) | (1u << sm2));
 
     while (1)
     {
