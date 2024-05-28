@@ -73,6 +73,16 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
 #define     CLK_PIO_DIF_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
 
+
+int interrupt = 0;
+static void dma_handler(void) 
+{
+    interrupt++;
+    dma_hw->ints0 = 1u << 0;
+    dma_channel_start(0);
+}
+
+
 int main() 
 {
     vreg_set_voltage(REG_VOLTAGE);
@@ -104,6 +114,9 @@ int main()
     printf("PIO CLOCK DIVIDER:        %2d + %3d/256\n", CLK_PIO_DIV_N, CLK_PIO_DIF_F);
     printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIF_F / 256.0f))));
     
+    sleep_ms(2000);
+
+
     // Bidirection slave clocked with the fast clock
     uint8_t sm0    = pio_claim_unused_sm(pio0_hw, true);
     uint    offset = pio_add_program    (pio0_hw, &i2s_duplex_program);
@@ -124,11 +137,33 @@ int main()
 
 
 
+    // DMA Setup
 
-//  dma_double_buffer_init(i2s, dma_handler);
+    int dma0 = dma_claim_unused_channel(true);
+
+    int32_t audio[32] __attribute__((aligned(16))) = { 0xFFFFFFFF, 0x000000000000, 0x66666666, 0xCCCCCCCC };
+
+    dma_channel_config c = dma_channel_get_default_config(dma0);
+
+    printf("DMA CHANNEL:                 %10d\n", dma0);
+
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, 4);                       // 16 bytes or four words and one sample at 48kHz
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, sm2, true));
+    dma_channel_configure(dma0, &c, &pio1_hw->txf[sm2], audio, 4, false);
     
+    dma_channel_set_irq0_enabled(dma0, true);
+    irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
+    irq_set_enabled(DMA_IRQ_0, true);
+
+    dma_channel_start(dma0);
+
     pio_enable_sm_mask_in_sync(pio0_hw, (1u << sm0));
     pio_enable_sm_mask_in_sync(pio1_hw, (1u << sm1) | (1u << sm2));
+
+
 
     while (1)
     {
@@ -136,6 +171,7 @@ int main()
         sleep_ms(500);
         gpio_put(LED_PIN, 0);
         sleep_ms(500);
+        printf("Interrupt called %d\n",interrupt);
     }
 
 }

@@ -56,7 +56,6 @@ loop_r:
 ; Output order:    DOx2 (double speed)
 
 public entry_point:
-
 frame:
     nop           [15];
 .wrap_target
