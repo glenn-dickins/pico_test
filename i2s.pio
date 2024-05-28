@@ -55,28 +55,29 @@ loop_r:
 
 .side_set 2 
 
+
 public entry_point:
-                        ;        /--- LRCLK
+.wrap_target                        ;        /--- LRCLK
                         ;        |/-- BCLK
                         ;        ||
-    wait 1 pin 1          side 0b00
-    wait 0 pin 1          side 0b00     ; Assume that falling LRCLK is on falling BCLK
-    set x, 15       [7]   side 0b01
-.wrap_target
-frameL: 
-    wait 1 pin 0          side 0b00
-    nop             [7]   side 0b01
-    wait 0 pin 0          side 0b00
-    nop             [6]   side 0b01
-    jmp x-- frameL        side 0b01
-    set x, 15             side 0b10 
-frameR: 
-    wait 1 pin 0          side 0b10
-    nop             [7]   side 0b11
-    wait 0 pin 0          side 0b10
-    nop             [6]   side 0b11
-    jmp x-- frameR        side 0b11
-    set x, 15             side 0b00
+    set x, 31             side 0b10
+    set y, 30       [6]   side 0b10
+    wait 0 pin 1          side 0b11     ; Sync to falling LRCLK (assume also falling BCLK)
+frameL0: 
+    nop             [7]   side 0b00
+    jmp x-- frameL0 [7]   side 0b01
+frameR0: 
+    nop             [7]   side 0b10
+    jmp y-- frameR0 [7]   side 0b11
+    set x, 31             side 0b10
+    set y, 30       [6]   side 0b10
+    wait 1 pin 1          side 0b11     ; Sync to rising LR
+frameL1: 
+    nop             [7]   side 0b00
+    jmp x-- frameL1 [7]   side 0b01
+frameR1: 
+    nop             [7]   side 0b10
+    jmp y-- frameR1 [7]   side 0b11
 .wrap
 
 
