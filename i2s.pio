@@ -62,24 +62,25 @@ public entry_point:
                         ;        ||
     set x, 31             side 0b10
     set y, 30       [6]   side 0b10
+    pull noblock          side 0b11
     wait 0 pin 1          side 0b11     ; Sync to falling LRCLK (assume also falling BCLK)
 frameL0: 
-    nop             [7]   side 0b00
+    out pins 1      [7]   side 0b00
     jmp x-- frameL0 [7]   side 0b01
 frameR0: 
-    nop             [7]   side 0b10
+    out pins 1      [7]   side 0b10
     jmp y-- frameR0 [7]   side 0b11
     set x, 31             side 0b10
     set y, 30       [6]   side 0b10
+    pull noblock          side 0b11
     wait 1 pin 1          side 0b11     ; Sync to rising LR
 frameL1: 
-    nop             [7]   side 0b00
+    out pins 1      [7]   side 0b00
     jmp x-- frameL1 [7]   side 0b01
 frameR1: 
-    nop             [7]   side 0b10
+    out pins 1      [7]   side 0b10
     jmp y-- frameR1 [7]   side 0b11
 .wrap
-
 
 
 
@@ -97,8 +98,8 @@ static inline void i2s_double_init(PIO pio, uint8_t sm, uint8_t offset, uint8_t 
     sm_config_set_out_pins     (&sm_config, pin_base + 4, 1);
     sm_config_set_in_pins      (&sm_config, pin_base + 2);
     sm_config_set_sideset_pins (&sm_config, pin_base + 5);
-    sm_config_set_jmp_pin      (&sm_config,  pin_base + 3);
-    sm_config_set_out_shift    (&sm_config,  false, false, 32);
+    sm_config_set_jmp_pin      (&sm_config, pin_base + 3);
+    sm_config_set_out_shift    (&sm_config, false, false, 32);
     pio_sm_init(pio, sm, offset, &sm_config);
 
     uint32_t pin_mask = (0b1110000 << pin_base);            // Three output pins
