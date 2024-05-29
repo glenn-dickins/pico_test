@@ -90,8 +90,8 @@ static void dma_handler(void)
     for (int i = 0; i < 4*ISR_BLOCK; i++)
     {
         p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+        if (i%4==0) p[i] = 0xFFFFFFFF;
     }
-    p[0] = 0xFFFFFFFF;
 
     p = p + 2*4*ISR_BLOCK;
     for (int i = 0; i < 4*ISR_BLOCK; i++)
@@ -156,10 +156,10 @@ int main()
     // PIO1 is responsible for the output double rate I2S
 
     uint    offset = pio_add_program (pio1, &i2s_double_with_clock_program);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
 
 
