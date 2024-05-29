@@ -48,26 +48,24 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 // The regulator setting slightly higher at 1.2V ensures the 288MHz is stable
 // 288MHz is a useful ratio for I2S, as it allows for 48kHz audio with a 6000x oversampling
 // 
-// The PIO execution is set so that 8 waits (or idle of 7) gives us a half bit clock at 96kHz.
+// The PIO execution is set so that 16 waits (or idle of 15) gives us a half bit clock at 96kHz.
 // With this match to 48kHz, we therefore infer the bitclock from the internal 48kHz, and use
 // instruction groups with 8 effective cycles.  The PIO then need only sync at each falling edge 
 // of the LRCLK.  This would give us the ability to track incoming sources with up to 1000ppm error.
 //
-// The PIO clock is a divider of 2.9275 which is close enough to 3, but gives us a nice dithering of 
-// the jitter.  The core PIO instructions are then running at either 2 or 3 system cycles (144Mhz or 
-// 96Mhz) though on average it is close to 96Mhz being 98.304MHz.   This is faster than the 50Mhz resampling 
+// The PIO clock is a divider of 1.4638 which is close enough to 1.5, but gives us a nice dithering of 
+// the jitter.  The core PIO instructions are then running at either 1 or 2 system cycles (288Mhz or 
+// 144Mhz) though on average it is close to 144Mhz being 197MHz.   This is faster than the 50Mhz resampling 
 // that will be in the following Nexalist amplifier, so we are not adding any effective jitter in that case.
-// For any other amplifier or DAC, we end up with jitter at about 4ms rms (10ms uniform) which is better
-// going to give us SIG/THD of 70dB or more at 1kHz. 
+// For any other amplifier or DAC, we end up with jitter at about 2ms rms (7ms uniform) which is 
+// going to give us SIG/THD of 80dB or more at 1kHz. 
 // https://troll-audio.com/articles/time-resolution-of-digital-audio/
 //
 // 
 
-#define     REG_VOLTAGE     VREG_VOLTAGE_1_20                               // Voltage regulator setting            
-//#define     CLK_SYS         (288000000L)                                    // The system clock frequency
-//#define     CLK_SYS           (295200000L)
-#define     CLK_SYS             (196800000L)
-
+#define     REG_VOLTAGE     VREG_VOLTAGE_1_25                               // Voltage regulator setting            
+#define     CLK_SYS         (288000000L)                                    // The system clock frequency
+//#define   CLK_SYS         (196800000L)                                    // This is slightly less jitter (PIO div is 1.00)
 #define     CLK_I2S         (48000)                                         // Single rate I2S frequency
 #define     CLK_PIO         (2*CLK_I2S*64*2*16)                             // PIO execution rate (8 cycles each half bit of 2XI2S)
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
@@ -113,6 +111,7 @@ int main()
     uint vco, postdiv1, postdiv2;
     int ret = check_sys_clock_khz(CLK_SYS/1000, &vco, &postdiv1, &postdiv2);
     printf("\n\nCHECKING CLOCK    %10ld %d %d %d %d\n", CLK_SYS, ret, vco, postdiv1, postdiv2);
+    sleep_ms(100);
 
     set_sys_clock_khz(CLK_SYS/1000, true);
     stdio_init_all();
@@ -155,13 +154,11 @@ int main()
 
     // PIO1 is responsible for the output double rate I2S
 
-    uint    offset = pio_add_program (pio1, &i2s_double_with_clock_program);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-
-
+    uint    offset = pio_add_program (pio1, &i2s_double_out_program);
+    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
 
     int dma = dma_claim_unused_channel(true);
@@ -174,7 +171,6 @@ int main()
     channel_config_set_chain_to(&c, dma);
     dma_channel_configure(dma, &c, &pio1_hw->txf[0], audio, 4*ISR_BLOCK, false);
     dma_channel_set_irq0_enabled(dma, true);
-
     
     dma = dma_claim_unused_channel(true);
     c = dma_channel_get_default_config(dma);
