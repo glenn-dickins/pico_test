@@ -6,44 +6,28 @@
 ;
 
 
-.program i2s_duplex
-; Duplex port (input and output) in slave mode.
-; Requires external BCK and LRCK.  Clock at the internal system clock.
-; 
+.program i2s_in
+; I2S audio input slaved from clock
 ; Input pin order: DIN, BCK, LRCK
-; JMP pin to LRCK.
-;
 
-start_l:
-  wait 1 pin 1                  ; DIN should be sampled on rising transition of BCK
-  in pins, 1                    ; first "bit" of new frame is actually LSB of last frame, per I2S 
-  pull noblock                  ;
-  push noblock                  ;
-  wait 0 pin 1                  ; ignore first BCK transition after edge
-public_entry_point:
-  wait 0 pin 2                  ; wait for L frame to come around before we start
-  out pins 1                    ; update DOUT on falling BCK edge
-loop_l:
-  wait 1 pin 1                  ; DIN should be sampled on rising transition of BCK
-  in pins, 1                    ; read DIN
-  wait 0 pin 1                  ; DOUT should be updated on falling transition of BCK
-  out pins 1                    ; update DOUT
-  jmp pin start_r               ; if LRCK has gone high, we're "done" with this word (1 bit left to read)
-  jmp loop_l                    ;
-start_r:
-  wait 1 pin 1                  ; wait for the last bit of the previous frame
-  in pins, 1                    ; first "bit" of new frame is actually LSB of last frame, per I2S
-  pull noblock                  ; pull next output word from FIFO
-  push noblock                  ; push the completed word to the FIFO
-  wait 0 pin 1                  ; wait for next clock cycle
-  out pins 1                    ; update DOUT on falling edge
-loop_r:
-  wait 1 pin 1                  ;
-  in pins 1                     ;
-  wait 0 pin 1                  ;
-  out pins 1                    ; update DOUT
-  jmp pin loop_r                ; if LRCK is still high, we're still sampling this word
-                                ; implicit jmp to start_l: otherwise, start the loop over
+frame:
+    nop           [28]
+    nop           [31]
+ .wrap_target
+    in pins, 1    [31]
+    push noblock  [31]
+bit:
+    in pins, 1    [31]
+    jmp y-- bit   [31]
+    in pins, 1  
+public entry_point:
+    set y, 29     
+    jmp x-- frame
+    set x,3
+    wait 1  pin 0       ;   Sync on the falling edge of LRCLK
+    wait 0  pin 0 [31]  ;
+.wrap
+
 
 
 
@@ -55,15 +39,16 @@ loop_r:
 ; Input pin order: LRCK (single speed)
 ; Output order:    DOx2 (double speed)
 
-public entry_point:
 frame:
     nop           [15];
 .wrap_target
-    pull noblock  [31]  ;   No need to output last bit (<32 bit data)
+    out pins, 1   [15]
+    pull noblock  [15]  ;
 bit:
     out pins, 1   [15]
     jmp y-- bit   [15]
-    out pins, 1   [12]
+    out pins, 1   [13]
+public entry_point:
     set y, 29 
     jmp x-- frame
     set x, 3
@@ -84,11 +69,13 @@ bit:
 .side_set 1
 
 bit:
-    wait 0 pin 0            side 1          ; Sync to the falling edge of     
+    wait 1 pin 0            side 1          ; Really make sure there is a clock
+    wait 0 pin 0            side 1          ; Sync to the falling edge of BCLK    
 .wrap_target
     mov pins, !x    [15]    side 0          ; Our new LR clock comes from LSB of x - counting frames
     nop             [15]    side 1          ;
     jmp y-- bit     [15]    side 0          ; 
+public entry_point:
     set  y, 15              side 1          ; 16 old BCLK bits in each new 2x frame
     jmp x-- bit             side 1          ;
     set  x, 3               side 1          ; Four frames make up a full 48kHz I2S cycle
@@ -101,60 +88,67 @@ bit:
 
 % c-sdk {
 
-static inline void i2s_double_clk_init(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 
+static inline void i2s_double_clk_init(PIO pio, int in, int out, int divN, int divF ) 
 {
-    pio_gpio_init(pio, pin_base + 2);        // BCLK in at half rate
-    pio_gpio_init(pio, pin_base + 3);        // LRCLK in at half rate
-    pio_gpio_init(pio, pin_base + 5);        // BCLK
-    pio_gpio_init(pio, pin_base + 6);        // LRCLK
+    uint8_t sm     = pio_claim_unused_sm(pio, true);
+    uint    offset = pio_add_program    (pio, &i2s_double_clk_program);
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
+
+    pio_gpio_init(pio, in);             // The BCLK
+    pio_gpio_init(pio, in+1);           // The LRCLK
+    pio_gpio_init(pio, out);            // The BCLKx2
+    pio_gpio_init(pio, out+1);          // The LRCLKx2
 
     pio_sm_config sm_config = i2s_double_clk_program_get_default_config(offset);
-    sm_config_set_out_pins     (&sm_config, pin_base + 6, 1);
-    sm_config_set_in_pins      (&sm_config, pin_base + 2);
-    sm_config_set_sideset_pins (&sm_config, pin_base + 5);
-    pio_sm_init(pio, sm, offset, &sm_config);
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));   // Initialize the X and Y registers
+    sm_config_set_out_pins     (&sm_config, out+1, 1);
+    sm_config_set_in_pins      (&sm_config, in);
+    sm_config_set_sideset_pins (&sm_config, out);
+    pio_sm_init(pio, sm, offset + i2s_double_clk_offset_entry_point, &sm_config);
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
     pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
 
-    uint32_t pin_mask = (0b1100000 << pin_base);            // Two output pins
+    uint32_t pin_mask = 3 << (out);                   // Two output pins
     pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
     pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
-
-    pin_mask = (0b0001100 << pin_base);                  // The clock from normal rate
+    pin_mask = (3 << in);                             // Two input pins
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
 }
 
 
-static inline void i2s_double_init(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 
+static inline void i2s_double_init(PIO pio, int lrclk, int out, int divN, int divF ) 
 {
-    pio_gpio_init(pio, pin_base + 3);        // LRCLK in at half rate
-    pio_gpio_init(pio, pin_base + 4);        // DO
+    uint8_t sm     = pio_claim_unused_sm(pio, true);
+    uint    offset = pio_add_program    (pio, &i2s_double_program);
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
+
+    pio_gpio_init(pio, lrclk);        // LRCLK in at half rate
+    pio_gpio_init(pio, out);          // Data
 
     pio_sm_config sm_config = i2s_double_program_get_default_config(offset);
-    sm_config_set_out_pins     (&sm_config, pin_base + 4, 1);
-    sm_config_set_in_pins      (&sm_config, pin_base + 3);
+    sm_config_set_out_pins     (&sm_config, out, 1);
+    sm_config_set_in_pins      (&sm_config, lrclk);
     sm_config_set_out_shift    (&sm_config, false, false, 32);
-    pio_sm_init(pio, sm, offset, &sm_config);
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));   // Initialize the X and Y registers
+    pio_sm_init(pio, sm, offset + i2s_double_offset_entry_point, &sm_config);
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
     pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
+//    pio->txf[sm] = 0;                                                         // Load for spurious pull on first pass
 
-    uint32_t pin_mask = (0b0010000 << pin_base);            // Only one output
+    uint32_t pin_mask = (1 << out);                             // Only one output
     pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
     pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
-
-    pin_mask = (0b0001000 << pin_base);                     // Everything synced off LR clock normal rate
+    pin_mask = (1 << lrclk);                                    // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
 
 }
 
-static inline void i2s_duplex_init(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 
+static inline void i2s_in(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 
 {
     pio_gpio_init(pio, pin_base + 0);       // DO
     pio_gpio_init(pio, pin_base + 1);       // DI
     pio_gpio_init(pio, pin_base + 2);       // BCLK
     pio_gpio_init(pio, pin_base + 3);       // LRCLK
 
-    pio_sm_config sm_config = i2s_duplex_program_get_default_config(offset);
+    pio_sm_config sm_config = i2s_in_program_get_default_config(offset);
     sm_config_set_out_pins (&sm_config, pin_base, 1);
     sm_config_set_in_pins  (&sm_config, pin_base + 1);
     sm_config_set_jmp_pin  (&sm_config, pin_base + 3);

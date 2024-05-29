@@ -71,17 +71,39 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define     CLK_I2S         (48000)                                         // Single rate I2S frequency
 #define     CLK_PIO         (2*CLK_I2S*64*2*16)                             // PIO execution rate (8 cycles each half bit of 2XI2S)
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
-#define     CLK_PIO_DIF_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
+#define     CLK_PIO_DIV_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
+
+
+// DMA Setup
+#define ISR_BLOCK      16           // Number of samples at 48kHz that we lump into each ISR call
+int32_t audio[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
 
 
 int interrupt = 0;
 static void dma_handler(void) 
 {
+    dma_start_channel_mask(0b000000000011);
+    dma_hw->ints0 = 3u;
     interrupt++;
-    dma_hw->ints0 = 1u << 0;
-    dma_channel_start(0);
+    
+    int32_t *p = (void *)dma_hw->ch[0].read_addr == audio ? audio + 4*ISR_BLOCK : audio;
+    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    {
+        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+    }
+    p[0] = 0xFFFFFFFF;
+
+    p = p + 2*4*ISR_BLOCK;
+    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    {
+        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+    }
+
+
 }
 
+
+void core1(void) { while(1); };
 
 int main() 
 {
@@ -106,62 +128,70 @@ int main()
     // Setting up a PIO to be a slave at 48kHz, and then to double this and create a
     // clock suitable for 96kHz.  
 
-    #define I2S_BASE         6
+    #define I2S_BCLK        2
+    #define I2S_LRCLK       3
+    #define I2S_DI0         4
+    #define I2S_DI1         5
+    #define I2S_DI2         6
+    #define I2S_DI3         7
+    #define I2S_DI4         8
+    #define I2S_DI5         9
+    #define I2S_DI6        10
+    #define I2S_DI7        11
+    #define I2S_2X_BCLK    12
+    #define I2S_2X_LRCLK   13
+    #define I2S_2X_DO0     14
+    #define I2S_2X_DO1     15
+    #define I2S_2X_DO2     16
+    #define I2S_2X_DO3     17
+
 
     printf("SETTING UP I2S\n");
     printf("I2S CLOCK DESIRED:          %10d\n", CLK_I2S);
     printf("PIO CLOCK DESIRED:          %10d\n", CLK_PIO);
-    printf("PIO CLOCK DIVIDER:        %2d + %3d/256\n", CLK_PIO_DIV_N, CLK_PIO_DIF_F);
-    printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIF_F / 256.0f))));
+    printf("PIO CLOCK DIVIDER:        %2d + %3d/256\n", CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIV_F / 256.0f))));
     
-    sleep_ms(2000);
 
-
-    // Bidirection slave clocked with the fast clock
-    uint8_t sm0    = pio_claim_unused_sm(pio0_hw, true);
-    uint    offset = pio_add_program    (pio0_hw, &i2s_duplex_program);
-    i2s_duplex_init                     (pio0_hw, sm0, offset, 12);
-    pio_sm_set_clkdiv_int_frac          (pio0_hw, sm0, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
-
-    // Double rate clock generation
-    uint8_t sm1    = pio_claim_unused_sm(pio1_hw, true);
-    offset         = pio_add_program    (pio1_hw, &i2s_double_clk_program);
-    i2s_double_clk_init                 (pio1_hw, sm1, offset, I2S_BASE);
-    pio_sm_set_clkdiv_int_frac          (pio1_hw, sm1, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
-
-    // Double rate master data out
-    uint8_t sm2    = pio_claim_unused_sm(pio1_hw, true);
-    offset         = pio_add_program    (pio1_hw, &i2s_double_program);
-    i2s_double_init                     (pio1_hw, sm2, offset, I2S_BASE);
-    pio_sm_set_clkdiv_int_frac          (pio1_hw, sm2, CLK_PIO_DIV_N, CLK_PIO_DIF_F);
+    // PIO1 is responsible for the output double rate I2S
+    i2s_double_clk_init(pio1, I2S_BCLK,  I2S_2X_BCLK, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_init    (pio1, I2S_LRCLK, I2S_2X_DO0,  CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_init    (pio1, I2S_LRCLK, I2S_2X_DO1,  CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
 
 
-    // DMA Setup
-
-    int dma0 = dma_claim_unused_channel(true);
-
-    int32_t audio[32] __attribute__((aligned(16))) = { 0xFFFFFFFF, 0x000000000000, 0x66666666, 0xCCCCCCCC };
-
-    dma_channel_config c = dma_channel_get_default_config(dma0);
-
-    printf("DMA CHANNEL:                 %10d\n", dma0);
-
+    int dma = dma_claim_unused_channel(true);
+    dma_channel_config c = dma_channel_get_default_config(dma);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
-    channel_config_set_ring(&c, false, 4);                       // 16 bytes or four words and one sample at 48kHz
+    channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, sm2, true));
-    dma_channel_configure(dma0, &c, &pio1_hw->txf[sm2], audio, 4, false);
+    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 1, true));
+    channel_config_set_chain_to(&c, dma);
+    dma_channel_configure(dma, &c, &pio1_hw->txf[1], audio, 4*ISR_BLOCK, false);
+    dma_channel_set_irq0_enabled(dma, true);
+
     
-    dma_channel_set_irq0_enabled(dma0, true);
+    dma = dma_claim_unused_channel(true);
+    c = dma_channel_get_default_config(dma);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 2, true));
+    channel_config_set_chain_to(&c, dma);
+    dma_channel_configure(dma, &c, &pio1_hw->txf[2], audio+ISR_BLOCK*4*2, 4*ISR_BLOCK, false);
+
+
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
 
-    dma_channel_start(dma0);
+    sleep_ms(100);      // Allow clocks to settle
 
-    pio_enable_sm_mask_in_sync(pio0_hw, (1u << sm0));
-    pio_enable_sm_mask_in_sync(pio1_hw, (1u << sm1) | (1u << sm2));
+
+    dma_start_channel_mask    (0b000000000011);
+    pio_enable_sm_mask_in_sync(pio1_hw, 0b0111);
+
 
 
 
