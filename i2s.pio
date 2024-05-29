@@ -85,6 +85,48 @@ public entry_point:
 
 
 
+.program i2s_double_with_clock
+; I2S audio output master running at 2x the i2s_duplex block (using same input framing).
+;
+; Input pin order: LRCK
+; Output order:    DO    BCKx2, LRCKx2 (side)
+; 
+
+.side_set 2
+
+frame:
+    nop           [7]       side 0b11   ; Extra delay for the second frame, as we do not sync on the falling LRCLK
+.wrap_target
+    out pins, 1   [7]       side 0b00   ; First bit is from last I2S frame
+    nop           [7]       side 0b00
+    pull noblock  [7]       side 0b01
+    set y, 30     [7]       side 0b01
+bit0:
+    out pins, 1   [7]       side 0b00   ; 31 bits from the freshly pulled word
+    nop           [7]       side 0b00
+    nop           [7]       side 0b01
+    jmp y-- bit0  [7]       side 0b01
+
+    out pins, 1   [7]       side 0b10   ; Last bit and signal second half of 96kHz frames
+    nop           [7]       side 0b10
+    pull noblock  [7]       side 0b11
+    set y, 29     [7]       side 0b11
+bit1:
+    out pins, 1   [7]       side 0b10   ; 30 bits from the newly pulled frame
+    nop           [7]       side 0b10
+    nop           [7]       side 0b11
+    jmp y-- bit1  [7]       side 0b11
+
+    out pins, 1   [7]       side 0b10   ; An additional bit as we decide to do second
+    nop           [7]       side 0b10   ; word of data in the 96kHz frame, or else ...
+    jmp x-- frame [7]       side 0b11   
+public entry_point:
+    set x, 1                side 0b11   ; Sync on the falling edge of LRCLK
+    wait 1  pin 0           side 0b11    
+    wait 0  pin 0           side 0b11    
+.wrap
+
+
 
 % c-sdk {
 
@@ -131,7 +173,6 @@ static inline void i2s_double_init(PIO pio, int lrclk, int out, int divN, int di
     pio_sm_init(pio, sm, offset + i2s_double_offset_entry_point, &sm_config);
     pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
     pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
-//    pio->txf[sm] = 0;                                                         // Load for spurious pull on first pass
 
     uint32_t pin_mask = (1 << out);                             // Only one output
     pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
@@ -139,6 +180,31 @@ static inline void i2s_double_init(PIO pio, int lrclk, int out, int divN, int di
     pin_mask = (1 << lrclk);                                    // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
 
+}
+
+static inline void i2s_double_with_clock_init(PIO pio, int sm, int offset, int lrclk, int clk2, int dout, int divN, int divF ) 
+{
+    pio_gpio_init(pio, lrclk);        // LRCLK in
+    pio_gpio_init(pio, dout);         // Data out
+    pio_gpio_init(pio, clk2);         // Bit clock at double rate
+    pio_gpio_init(pio, clk2+1);       // LR clock at double rate
+
+    pio_sm_config sm_config = i2s_double_with_clock_program_get_default_config(offset);
+    sm_config_set_out_pins     (&sm_config, dout, 1);
+    sm_config_set_in_pins      (&sm_config, lrclk);
+    sm_config_set_sideset_pins (&sm_config, clk2);
+    sm_config_set_out_shift    (&sm_config, false, false, 32);
+    pio_sm_init(pio, sm, offset + i2s_double_offset_entry_point, &sm_config);
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
+
+    uint32_t pin_mask = (1 << dout) | (3 << clk2);               // Data out and two clocks
+    pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
+    pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
+    pin_mask = (1 << lrclk);                                    // Everything synced off LR clock normal rate
+    pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
+
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
 }
 
 static inline void i2s_in(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 

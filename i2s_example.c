@@ -154,9 +154,13 @@ int main()
     
 
     // PIO1 is responsible for the output double rate I2S
-    i2s_double_clk_init(pio1, I2S_BCLK,  I2S_2X_BCLK, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_init    (pio1, I2S_LRCLK, I2S_2X_DO0,  CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_init    (pio1, I2S_LRCLK, I2S_2X_DO1,  CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+
+    uint    offset = pio_add_program (pio1, &i2s_double_with_clock_program);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_with_clock_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_LRCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+
 
 
 
@@ -166,9 +170,9 @@ int main()
     channel_config_set_write_increment(&c, false);
     channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 1, true));
+    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 0, true));
     channel_config_set_chain_to(&c, dma);
-    dma_channel_configure(dma, &c, &pio1_hw->txf[1], audio, 4*ISR_BLOCK, false);
+    dma_channel_configure(dma, &c, &pio1_hw->txf[0], audio, 4*ISR_BLOCK, false);
     dma_channel_set_irq0_enabled(dma, true);
 
     
@@ -178,9 +182,9 @@ int main()
     channel_config_set_write_increment(&c, false);
     channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 2, true));
+    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 1, true));
     channel_config_set_chain_to(&c, dma);
-    dma_channel_configure(dma, &c, &pio1_hw->txf[2], audio+ISR_BLOCK*4*2, 4*ISR_BLOCK, false);
+    dma_channel_configure(dma, &c, &pio1_hw->txf[1], audio+ISR_BLOCK*4*2, 4*ISR_BLOCK, false);
 
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
@@ -189,9 +193,8 @@ int main()
     sleep_ms(100);      // Allow clocks to settle
 
 
-    dma_start_channel_mask    (0b000000000011);
-    pio_enable_sm_mask_in_sync(pio1_hw, 0b0111);
-
+    dma_start_channel_mask    (0b000000000011);         // Start DMA first to make sure that the PIO has data
+    pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);
 
 
 
