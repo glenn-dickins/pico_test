@@ -85,7 +85,7 @@ Histogram   isr_exec("ISR Exec Time", 0, 0.0006);
 int interrupt = 0;
 static void dma_handler(void) 
 {
-    dma_start_channel_mask(0b000000000011);
+    dma_start_channel_mask(0b000000001111);
     dma_hw->ints0 = 3u;
     int64_t time = isr_call.time();
     isr_exec.start(time);
@@ -97,6 +97,18 @@ static void dma_handler(void)
     {
         p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
         if (i%4==0) p[i] = 0xFFFFFFFF;
+    }
+
+    p = p + 2*4*ISR_BLOCK;
+    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    {
+        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+    }
+
+    p = p + 2*4*ISR_BLOCK;
+    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    {
+        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
     }
 
     p = p + 2*4*ISR_BLOCK;
@@ -123,6 +135,22 @@ static void dma_handler(void)
         X[1] = Z2;
     }
     isr_exec.time();
+}
+
+typedef enum { IN, OUT } dma_dir_t;
+int dma_setup(pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
+{
+    int dma = dma_claim_unused_channel(true);
+    dma_channel_config c = dma_channel_get_default_config(dma);
+    channel_config_set_read_increment(&c,  dir == OUT);
+    channel_config_set_write_increment(&c, dir == IN );
+    channel_config_set_ring(&c, dir == IN, log2(block*2*sizeof(int32_t)));
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_dreq(&c, pio_get_dreq(pio, sm, true));
+    if (dir==OUT) dma_channel_configure(dma, &c, &pio->txf[sm], data, block, false);
+    else          dma_channel_configure(dma, &c, data, &pio->rxf[sm], block, false);
+    dma_channel_set_irq0_enabled(dma, interrupt);
+    return dma;
 }
 
 
@@ -178,43 +206,23 @@ int main()
     
 
     // PIO1 is responsible for the output double rate I2S
-
     uint    offset = pio_add_program (pio1, &i2s_double_out_program);
     i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
-
-    int dma = dma_claim_unused_channel(true);
-    dma_channel_config c = dma_channel_get_default_config(dma);
-    channel_config_set_read_increment(&c, true);
-    channel_config_set_write_increment(&c, false);
-    channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 0, true));
-    channel_config_set_chain_to(&c, dma);
-    dma_channel_configure(dma, &c, &pio1_hw->txf[0], audio, 4*ISR_BLOCK, false);
-    dma_channel_set_irq0_enabled(dma, true);
-    
-    dma = dma_claim_unused_channel(true);
-    c = dma_channel_get_default_config(dma);
-    channel_config_set_read_increment(&c, true);
-    channel_config_set_write_increment(&c, false);
-    channel_config_set_ring(&c, false, log2(ISR_BLOCK*4*2*sizeof(int32_t)));
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio1_hw, 1, true));
-    channel_config_set_chain_to(&c, dma);
-    dma_channel_configure(dma, &c, &pio1_hw->txf[1], audio+ISR_BLOCK*4*2, 4*ISR_BLOCK, false);
-
+    dma_setup(pio1, 0, OUT, 4*ISR_BLOCK, audio,  true);
+    dma_setup(pio1, 1, OUT, 4*ISR_BLOCK, audio + 1*2*4*ISR_BLOCK);
+    dma_setup(pio1, 2, OUT, 4*ISR_BLOCK, audio + 2*2*4*ISR_BLOCK);
+    dma_setup(pio1, 3, OUT, 4*ISR_BLOCK, audio + 3*2*4*ISR_BLOCK);
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
 
     sleep_ms(100);      // Allow clocks to settle
 
-
-    dma_start_channel_mask    (0b000000000011);         // Start DMA first to make sure that the PIO has data
+    dma_start_channel_mask    (         0b1111);   // Start DMA first to make sure that the PIO has data
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);
 
     char str[8000];
