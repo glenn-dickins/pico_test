@@ -50,7 +50,9 @@ pico_sdk_init()
 
 message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 add_executable(i2s_example)
-target_sources(i2s_example PRIVATE i2s_example.c)
+target_sources(i2s_example PRIVATE i2s_example.cpp daes67/src/histogram.cpp daes67/src/log.cpp)
+
+target_include_directories(i2s_example PRIVATE ${CMAKE_CURRENT_LIST_DIR}/daes67/include)
 
 pico_generate_pio_header(i2s_example ${CMAKE_CURRENT_LIST_DIR}/i2s.pio)
 

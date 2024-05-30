@@ -1,0 +1,3 @@
+[submodule "daes67"]
+	path = daes67
+	url = git@github.com:dickinsaudio/daes67

@@ -31,7 +31,7 @@
 #include "hardware/vreg.h"
 #include "pico/stdlib.h"
 #include "i2s.pio.h"
-
+#include "histogram.hpp"
 
 #ifndef PICO_DEFAULT_LED_PIN
 #warning blink example requires a board with a regular LED
@@ -76,14 +76,22 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define ISR_BLOCK      16           // Number of samples at 48kHz that we lump into each ISR call
 int32_t audio[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
 
+using namespace DAES67;
+
+Histogram   isr_call("ISR Call Time", 0, 0.0006);
+Histogram   isr_exec("ISR Exec Time", 0, 0.0006);
+
 
 int interrupt = 0;
 static void dma_handler(void) 
 {
     dma_start_channel_mask(0b000000000011);
     dma_hw->ints0 = 3u;
-    interrupt++;
+    int64_t time = isr_call.time();
+    isr_exec.start(time);
     
+    int interrupt = isr_call.N();
+
     int32_t *p = (void *)dma_hw->ch[0].read_addr == audio ? audio + 4*ISR_BLOCK : audio;
     for (int i = 0; i < 4*ISR_BLOCK; i++)
     {
@@ -97,7 +105,24 @@ static void dma_handler(void)
         p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
     }
 
+    volatile int32_t X[4] = { };
+    int32_t Y1[4] = { 13668795,    15196667,     2130485,    15323904 };
+    int32_t Y2[4] = { 1, 2, 3, 4 };
 
+    for (int32_t n=0; n<10*8*ISR_BLOCK; n++)
+    {
+        int32_t  Z1 = X[0] * Y1[0];
+        int32_t  Z2 = X[0] * Y2[0]; 
+        Z1 += X[1] * Y1[1];
+        Z2 += X[1] * Y2[1]; 
+        Z1 += X[2] * Y1[2];
+        Z2 += X[2] * Y2[2]; 
+        Z1 += X[3] * Y1[3];
+        Z2 += X[3] * Y2[3]; 
+        X[0] = Z1;
+        X[1] = Z2;
+    }
+    isr_exec.time();
 }
 
 
@@ -192,33 +217,21 @@ int main()
     dma_start_channel_mask    (0b000000000011);         // Start DMA first to make sure that the PIO has data
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);
 
-
-
-    volatile int32_t X[4] = { };
-    int32_t Y1[4] = { 13668795,    15196667,     2130485,    15323904 };
-    int32_t Y2[4] = { 1, 2, 3, 4 };
-
+    char str[8000];
+    int64_t time = isr_call.now();
     while(1)
     {
-        for (int32_t n=0; n<400000; n++)
-        {
-            int32_t  Z1 = X[0] * Y1[0];
-            int32_t  Z2 = X[0] * Y2[0]; 
-            Z1 += X[1] * Y1[1];
-            Z2 += X[1] * Y2[1]; 
-            Z1 += X[2] * Y1[2];
-            Z2 += X[2] * Y2[2]; 
-            Z1 += X[3] * Y1[3];
-            Z2 += X[3] * Y2[3]; 
-            X[0] = Z1;
-            X[1] = Z2;
-        }
-
         gpio_put(LED_PIN, 1);
         sleep_ms(500);
         gpio_put(LED_PIN, 0);
         sleep_ms(500);
-        printf("Interrupt called %d\n",interrupt);
+    
+        printf("Time passed %lld\n",isr_call.now()-time);
+        time = isr_call.now();
+        isr_call.text(20, str);
+        printf("%s\n", str);
+        isr_exec.text(20, str);
+        printf("%s\n\n", str);
     }
 
 }
