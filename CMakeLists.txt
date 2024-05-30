@@ -48,11 +48,17 @@ include(pico_sdk_import.cmake)
 project(i2s_example C CXX ASM)
 pico_sdk_init()
 
+message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 add_executable(i2s_example)
+target_sources(i2s_example PRIVATE i2s_example.c)
 
 pico_generate_pio_header(i2s_example ${CMAKE_CURRENT_LIST_DIR}/i2s.pio)
 
-target_sources(i2s_example PRIVATE i2s_example.c)
+add_custom_target(i2s_example_dis ALL
+    COMMAND ${CMAKE_OBJDUMP} -d -S $<TARGET_FILE:i2s_example> > i2s_example.dis2
+    DEPENDS i2s_example
+)
+
 
 pico_set_program_name(i2s_example "i2s_test")
 pico_set_program_version(i2s_example "1.0.1")

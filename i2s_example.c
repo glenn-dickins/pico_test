@@ -194,8 +194,26 @@ int main()
 
 
 
-    while (1)
+    volatile int32_t X[4] = { };
+    int32_t Y1[4] = { 13668795,    15196667,     2130485,    15323904 };
+    int32_t Y2[4] = { 1, 2, 3, 4 };
+
+    while(1)
     {
+        for (int32_t n=0; n<400000; n++)
+        {
+            int32_t  Z1 = X[0] * Y1[0];
+            int32_t  Z2 = X[0] * Y2[0]; 
+            Z1 += X[1] * Y1[1];
+            Z2 += X[1] * Y2[1]; 
+            Z1 += X[2] * Y1[2];
+            Z2 += X[2] * Y2[2]; 
+            Z1 += X[3] * Y1[3];
+            Z2 += X[3] * Y2[3]; 
+            X[0] = Z1;
+            X[1] = Z2;
+        }
+
         gpio_put(LED_PIN, 1);
         sleep_ms(500);
         gpio_put(LED_PIN, 0);
