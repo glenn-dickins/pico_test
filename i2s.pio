@@ -5,6 +5,36 @@
 ; DO DI BCLK LRCLK    DO BCLKx2 LRCLKx2
 ;
 
+.program tdm_in
+; TDM 8 channel audio slaved from clock
+; Input pin:
+; JMP pin:   LRCK
+; Still expects a 50% LR CLK duty cycle
+; And falling edge LR is the start of frame
+
+frame:
+    nop           [11]
+.wrap_target
+    in pins, 1    [7]
+    push noblock  [7]
+bit:
+    in pins, 1    [7]
+    jmp y-- bit   [7]
+    in pins, 1  
+start:
+    set y, 29     
+    jmp x-- frame
+stall:
+    jmp pin stall        ; Wait for fall of LRCLK
+    set x,7        [7] 
+.wrap
+public entry_point:     ; Wait for LRCLK to be high
+    jmp pin stall2
+    jmp start
+stall2:
+    jmp entry_point    
+
+
 
 .program i2s_in
 ; I2S audio input slaved from clock
@@ -41,7 +71,7 @@ public entry_point:
 .side_set 2
 
 frame:
-    wait 0 pin 0            side 0b11   ; Wait for falling edge of BCLK
+    wait 1 pin 1            side 0b11   ; Wait for rising LRCLK
 .wrap_target
     out pins, 1   [7]       side 0b00   ; First bit is from last I2S frame
     nop           [7]       side 0b00
@@ -56,7 +86,7 @@ bit0:
     out pins, 1   [7]       side 0b10   ; Last bit and signal second half of 96kHz frames
     set y, 29     [7]       side 0b10
     pull noblock  [7]       side 0b11
-    wait 1 pin 0            side 0b11   ; Wait for BCLK to be or shift high (tighter sync)
+    nop           [7]       side 0b11   
 bit1:
     out pins, 1   [7]       side 0b10   ; 30 bits from the newly pulled frame
     nop           [7]       side 0b10
@@ -76,6 +106,23 @@ public entry_point:
 
 % c-sdk {
 
+
+static inline void tdm_in_init(PIO pio, int sm, int offset, int lrclk, int din, int divN, int divF ) 
+{
+    pio_gpio_init(pio, lrclk);        // TDM word clock - 50% duty cycle, falling edge for start
+    pio_gpio_init(pio, din);          // Data in
+
+    pio_sm_config sm_config = tdm_in_program_get_default_config(offset);
+    sm_config_set_in_pins      (&sm_config, din);
+    sm_config_set_jmp_pin      (&sm_config, lrclk);
+    sm_config_set_in_shift     (&sm_config, false, false, 0);
+    pio_sm_init(pio, sm, offset + tdm_in_offset_entry_point, &sm_config);
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
+    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
+    uint32_t pin_mask = (1 << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
+    pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
+}
 
 static inline void i2s_double_out_init(PIO pio, int sm, int offset, int bclk, int bclk2, int dout, int divN, int divF ) 
 {

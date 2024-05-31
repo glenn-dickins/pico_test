@@ -74,7 +74,9 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 
 // DMA Setup
 #define ISR_BLOCK      16           // Number of samples at 48kHz that we lump into each ISR call
-int32_t audio[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
+int32_t audio_out[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
+int32_t audio_tdm[  2*8*ISR_BLOCK] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
+int32_t audio_i2s[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
 
 using namespace DAES67;
 
@@ -85,36 +87,62 @@ Histogram   isr_exec("ISR Exec Time", 0, 0.0006);
 int interrupt = 0;
 static void dma_handler(void) 
 {
-    dma_start_channel_mask(0b000000001111);
-    dma_hw->ints0 = 3u;
-    int64_t time = isr_call.time();
-    isr_exec.start(time);
+    dma_start_channel_mask(0b000000011111);         // Restart this as soon as possible !!
+    dma_hw->ints0 = 1u;                             // No rush for this, and should never re-enter
+    int64_t time = isr_call.time();                 // Mark the ISR call time and setup for
+    isr_exec.start(time);                           // measuring execution time
+
+    int block = (void *)dma_hw->ch[0].read_addr != audio_out;       // Determine which double buffer to use
+
+    int32_t *pout = audio_out + block * 4*ISR_BLOCK;
+    int32_t *pin  = audio_tdm + block * 8*ISR_BLOCK;
     
-    int interrupt = isr_call.N();
 
-    int32_t *p = (void *)dma_hw->ch[0].read_addr == audio ? audio + 4*ISR_BLOCK : audio;
-    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    for (int i = 0; i < ISR_BLOCK; i++)
     {
-        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
-        if (i%4==0) p[i] = 0xFFFFFFFF;
+        pout[4*i+0] = pin[8*i+0]; 
+        pout[4*i+1] = pin[8*i+1];
+        pout[4*i+2] = 0;
+        pout[4*i+3] = 0;
+
+//        pout[4*i+0] = 0xFF0F0000; 
+//        pout[4*i+1] = 0xFF00F000;
+//        pout[4*i+2] = 0xFF000F00;
+//        pout[4*i+3] = 0xFF0000F0;
+
+//        pout[4*i+0] = 0xFFFFFFFF; 
+//        pout[4*i+1] = 0;
+//        pout[4*i+2] = 0;
+//        pout[4*i+3] = 0;
+
+
     }
 
-    p = p + 2*4*ISR_BLOCK;
-    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    pout = pout + 2*4*ISR_BLOCK;
+    for (int i = 0; i < ISR_BLOCK; i++)
     {
-        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+        pout[4*i+0] = pin[8*i+2];
+        pout[4*i+1] = pin[8*i+3];
+        pout[4*i+2] = 0;
+        pout[4*i+3] = 0;
     }
 
-    p = p + 2*4*ISR_BLOCK;
-    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    pout = pout + 2*4*ISR_BLOCK;
+    for (int i = 0; i < ISR_BLOCK; i++)
     {
-        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+        pout[4*i+0] = pin[8*i+4];
+        pout[4*i+1] = pin[8*i+5];
+        pout[4*i+2] = 0;
+        pout[4*i+3] = 0;
     }
 
-    p = p + 2*4*ISR_BLOCK;
-    for (int i = 0; i < 4*ISR_BLOCK; i++)
+    pout = pout + 2*4*ISR_BLOCK;
+    for (int i = 0; i < ISR_BLOCK; i++)
     {
-        p[i] = 1<<((interrupt*ISR_BLOCK/48000)%32);
+        pout[4*i+0] = pin[8*i+6];
+        pout[4*i+1] = pin[8*i+7];
+        pout[4*i+2] = 0;
+        pout[4*i+3] = 0;
     }
 
     volatile int32_t X[4] = { };
@@ -138,15 +166,14 @@ static void dma_handler(void)
 }
 
 typedef enum { IN, OUT } dma_dir_t;
-int dma_setup(pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
+int dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
 {
-    int dma = dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config(dma);
     channel_config_set_read_increment(&c,  dir == OUT);
     channel_config_set_write_increment(&c, dir == IN );
     channel_config_set_ring(&c, dir == IN, log2(block*2*sizeof(int32_t)));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    channel_config_set_dreq(&c, pio_get_dreq(pio, sm, true));
+    channel_config_set_dreq(&c, pio_get_dreq(pio, sm, dir == OUT));
     if (dir==OUT) dma_channel_configure(dma, &c, &pio->txf[sm], data, block, false);
     else          dma_channel_configure(dma, &c, data, &pio->rxf[sm], block, false);
     dma_channel_set_irq0_enabled(dma, interrupt);
@@ -204,25 +231,31 @@ int main()
     printf("PIO CLOCK DIVIDER:        %2d + %3d/256\n", CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIV_F / 256.0f))));
     
+    // PIO0 is responsible for the input I2S or TDM
+    uint offset = pio_add_program (pio0, &tdm_in_program);
+    tdm_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
     // PIO1 is responsible for the output double rate I2S
-    uint    offset = pio_add_program (pio1, &i2s_double_out_program);
-    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    i2s_double_out_init       (pio1, pio_claim_unused_sm(pio1, true), offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    offset = pio_add_program  (pio1, &i2s_double_out_program);
+    i2s_double_out_init       (pio1, 0, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, 1, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO1, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, 2, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    i2s_double_out_init       (pio1, 3, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
-    dma_setup(pio1, 0, OUT, 4*ISR_BLOCK, audio,  true);
-    dma_setup(pio1, 1, OUT, 4*ISR_BLOCK, audio + 1*2*4*ISR_BLOCK);
-    dma_setup(pio1, 2, OUT, 4*ISR_BLOCK, audio + 2*2*4*ISR_BLOCK);
-    dma_setup(pio1, 3, OUT, 4*ISR_BLOCK, audio + 3*2*4*ISR_BLOCK);
+    dma_setup(0, pio1, 0, OUT, 4*ISR_BLOCK, audio_out,  true);
+    dma_setup(1, pio1, 1, OUT, 4*ISR_BLOCK, audio_out + 1*2*4*ISR_BLOCK);
+    dma_setup(2, pio1, 2, OUT, 4*ISR_BLOCK, audio_out + 2*2*4*ISR_BLOCK);
+    dma_setup(3, pio1, 3, OUT, 4*ISR_BLOCK, audio_out + 3*2*4*ISR_BLOCK);
+
+    dma_setup(4, pio0, 0, IN,  8*ISR_BLOCK, audio_tdm+2);
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
 
     sleep_ms(100);      // Allow clocks to settle
 
-    dma_start_channel_mask    (         0b1111);   // Start DMA first to make sure that the PIO has data
+    dma_start_channel_mask    (        0b11111);   // Start DMA first to make sure that the PIO has data
+    pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);
 
     char str[8000];
@@ -240,6 +273,7 @@ int main()
         printf("%s\n", str);
         isr_exec.text(20, str);
         printf("%s\n\n", str);
+
     }
 
 }
