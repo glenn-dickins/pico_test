@@ -75,7 +75,7 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 
 
 // DMA Setup
-#define ISR_BLOCK      16           // Number of samples at 48kHz that we lump into each ISR call
+#define ISR_BLOCK      4           // Number of samples at 48kHz that we lump into each ISR call
 //int32_t audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
 int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
 int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
@@ -83,8 +83,8 @@ int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                        
 
 using namespace DAES67;
 
-Histogram   isr_call("ISR Call Time", 0, 0.0006);
-Histogram   isr_exec("ISR Exec Time", 0, 0.0006);
+Histogram   isr_call("ISR Call Time", 0, 0.0001);
+Histogram   isr_exec("ISR Exec Time", 0, 0.0001);
 
 
 
@@ -99,24 +99,14 @@ static void dma_handler(void)
     int block = (void *)dma_hw->ch[0].read_addr != audio_out;       // Determine which double buffer to use
 
     // Move all of the TDM data into the I2S data buffers
-    for (int n = 0; n < 4; n++)
+    for (int n = 0; n < 8; n++)
     {
-        int32_t *pout = &audio_out[n][block][0][0];
-        int32_t *pin  = &audio_tdm[0][block][0][2*n];
-        for (int i = 0; i < ISR_BLOCK; i++)
-        {
-            pout[4*i+0] = pin[8*i+0]; 
-            pout[4*i+1] = pin[8*i+1];
-            pout[4*i+2] = 0;
-            pout[4*i+3] = 0;
-        }
-        pin  = pin  + 2;
-        pout = pout + 2*4*ISR_BLOCK;
-    }
-
-
-
-//    filter2x(pin, pout, 8*ISR_BLOCK);                // Filter the incoming TDM data (8 channels)
+        int32_t *pbuf = audio_buf[n];
+        int32_t *pin  = &audio_tdm[0][block][0][n];
+        for (int m=0; m<FILTER2X_TAPS-1; m++) pbuf[m]                 = pbuf[m+ISR_BLOCK];  // Move the FIR buffer along
+        for (int m=0; m<ISR_BLOCK; m++)       pbuf[m+FILTER2X_TAPS-1] = pin[8*m] >> 8;      // Scale down and add new data
+        filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
+    }        
 
     isr_exec.time();
 }
