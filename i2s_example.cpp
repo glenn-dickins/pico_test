@@ -32,6 +32,7 @@
 #include "pico/stdlib.h"
 #include "i2s.pio.h"
 #include "histogram.hpp"
+#include "upsample.h"
 
 #ifndef PICO_DEFAULT_LED_PIN
 #warning blink example requires a board with a regular LED
@@ -72,16 +73,19 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define     CLK_PIO_DIV_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
 
 
+
 // DMA Setup
 #define ISR_BLOCK      16           // Number of samples at 48kHz that we lump into each ISR call
-int32_t audio_out[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
-int32_t audio_tdm[  2*8*ISR_BLOCK] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
-int32_t audio_i2s[4*2*4*ISR_BLOCK] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
+//int32_t audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
+int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
+int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
+int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                     // 8 channels of FIR buffer
 
 using namespace DAES67;
 
 Histogram   isr_call("ISR Call Time", 0, 0.0006);
 Histogram   isr_exec("ISR Exec Time", 0, 0.0006);
+
 
 
 int interrupt = 0;
@@ -94,74 +98,26 @@ static void dma_handler(void)
 
     int block = (void *)dma_hw->ch[0].read_addr != audio_out;       // Determine which double buffer to use
 
-    int32_t *pout = audio_out + block * 4*ISR_BLOCK;
-    int32_t *pin  = audio_tdm + block * 8*ISR_BLOCK;
-    
-
-    for (int i = 0; i < ISR_BLOCK; i++)
+    // Move all of the TDM data into the I2S data buffers
+    for (int n = 0; n < 4; n++)
     {
-        pout[4*i+0] = pin[8*i+0]; 
-        pout[4*i+1] = pin[8*i+1];
-        pout[4*i+2] = 0;
-        pout[4*i+3] = 0;
-
-//        pout[4*i+0] = 0xFF0F0000; 
-//        pout[4*i+1] = 0xFF00F000;
-//        pout[4*i+2] = 0xFF000F00;
-//        pout[4*i+3] = 0xFF0000F0;
-
-//        pout[4*i+0] = 0xFFFFFFFF; 
-//        pout[4*i+1] = 0;
-//        pout[4*i+2] = 0;
-//        pout[4*i+3] = 0;
-
-
+        int32_t *pout = &audio_out[n][block][0][0];
+        int32_t *pin  = &audio_tdm[0][block][0][2*n];
+        for (int i = 0; i < ISR_BLOCK; i++)
+        {
+            pout[4*i+0] = pin[8*i+0]; 
+            pout[4*i+1] = pin[8*i+1];
+            pout[4*i+2] = 0;
+            pout[4*i+3] = 0;
+        }
+        pin  = pin  + 2;
+        pout = pout + 2*4*ISR_BLOCK;
     }
 
-    pout = pout + 2*4*ISR_BLOCK;
-    for (int i = 0; i < ISR_BLOCK; i++)
-    {
-        pout[4*i+0] = pin[8*i+2];
-        pout[4*i+1] = pin[8*i+3];
-        pout[4*i+2] = 0;
-        pout[4*i+3] = 0;
-    }
 
-    pout = pout + 2*4*ISR_BLOCK;
-    for (int i = 0; i < ISR_BLOCK; i++)
-    {
-        pout[4*i+0] = pin[8*i+4];
-        pout[4*i+1] = pin[8*i+5];
-        pout[4*i+2] = 0;
-        pout[4*i+3] = 0;
-    }
 
-    pout = pout + 2*4*ISR_BLOCK;
-    for (int i = 0; i < ISR_BLOCK; i++)
-    {
-        pout[4*i+0] = pin[8*i+6];
-        pout[4*i+1] = pin[8*i+7];
-        pout[4*i+2] = 0;
-        pout[4*i+3] = 0;
-    }
+//    filter2x(pin, pout, 8*ISR_BLOCK);                // Filter the incoming TDM data (8 channels)
 
-    volatile int32_t X[4] = { };
-    int32_t Y1[4] = { 13668795,    15196667,     2130485,    15323904 };
-    int32_t Y2[4] = { 1, 2, 3, 4 };
-
-    for (int32_t n=0; n<10*8*ISR_BLOCK; n++)
-    {
-        int32_t  Z1 = X[0] * Y1[0];
-        int32_t  Z2 = X[0] * Y2[0]; 
-        Z1 += X[1] * Y1[1];
-        Z2 += X[1] * Y2[1]; 
-        Z1 += X[2] * Y1[2];
-        Z2 += X[2] * Y2[2]; 
-        Z1 += X[3] * Y1[3];
-        Z2 += X[3] * Y2[3]; 
-        X[0] = Z1;
-        X[1] = Z2;
-    }
     isr_exec.time();
 }
 
@@ -242,15 +198,16 @@ int main()
     i2s_double_out_init       (pio1, 2, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, 3, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
-    dma_setup(0, pio1, 0, OUT, 4*ISR_BLOCK, audio_out,  true);
-    dma_setup(1, pio1, 1, OUT, 4*ISR_BLOCK, audio_out + 1*2*4*ISR_BLOCK);
-    dma_setup(2, pio1, 2, OUT, 4*ISR_BLOCK, audio_out + 2*2*4*ISR_BLOCK);
-    dma_setup(3, pio1, 3, OUT, 4*ISR_BLOCK, audio_out + 3*2*4*ISR_BLOCK);
+    dma_setup(0, pio1, 0, OUT, 4*ISR_BLOCK,  (int32_t *)audio_out[0],  true);
+    dma_setup(1, pio1, 1, OUT, 4*ISR_BLOCK,  (int32_t *)audio_out[1]);
+    dma_setup(2, pio1, 2, OUT, 4*ISR_BLOCK,  (int32_t *)audio_out[2]);
+    dma_setup(3, pio1, 3, OUT, 4*ISR_BLOCK,  (int32_t *)audio_out[3]);
 
-    dma_setup(4, pio0, 0, IN,  8*ISR_BLOCK, audio_tdm+2);
+    dma_setup(4, pio0, 0, IN,  8*ISR_BLOCK, ((int32_t *)audio_tdm[0])+2);                   // The address offset here aligns the TDM channels
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
+    irq_set_priority(DMA_IRQ_0, 0);                                         // Make this the highest priority
 
     sleep_ms(100);      // Allow clocks to settle
 
@@ -263,9 +220,9 @@ int main()
     while(1)
     {
         gpio_put(LED_PIN, 1);
-        sleep_ms(500);
+        sleep_ms(2300);
         gpio_put(LED_PIN, 0);
-        sleep_ms(500);
+        sleep_ms(2299);
     
         printf("Time passed %lld\n",isr_call.now()-time);
         time = isr_call.now();
