@@ -12,8 +12,15 @@
 ; Still expects a 50% LR CLK duty cycle
 ; And falling edge LR is the start of frame
 
+
+public entry_point: 
+    set x, 7
+    set y, 29
+stall1:
+    jmp pin stall1      ; Wait for falling edge of LRCLK
+    jmp bit       [23]  ; First bit of first word on second rising
 frame:
-    nop           [11]
+    nop           [12]
 .wrap_target
     in pins, 1    [7]
     push noblock  [7]
@@ -21,18 +28,13 @@ bit:
     in pins, 1    [7]
     jmp y-- bit   [7]
     in pins, 1  
-start:
     set y, 29     
     jmp x-- frame
 stall:
     jmp pin stall        ; Wait for fall of LRCLK
     set x,7        [7] 
 .wrap
-public entry_point:     ; Wait for LRCLK to be high
-    jmp pin stall2
-    jmp start
-stall2:
-    jmp entry_point    
+
 
 
 
@@ -99,7 +101,7 @@ bit1:
 public entry_point:
     set x, 1                side 0b11   ; Two of these frames for each old LRCLK
     wait 1  pin 1           side 0b11   ; Hard sync on the falling edge of LRCLK
-    wait 0  pin 1           side 0b11    
+    wait 0  pin 1           side 0b11
 .wrap
 
 
