@@ -32,6 +32,7 @@
 #include "pico/stdlib.h"
 #include "i2s.pio.h"
 #include "histogram.hpp"
+#include "arm_math.h"
 #include "upsample.h"
 
 #ifndef PICO_DEFAULT_LED_PIN
@@ -105,7 +106,7 @@ static void dma_handler(void)
         int32_t *pin  = &audio_tdm[0][block][0][n];
         for (int m=0; m<FILTER2X_TAPS-1; m++) pbuf[m]                 = pbuf[m+ISR_BLOCK];  // Move the FIR buffer along
         for (int m=0; m<ISR_BLOCK; m++)       pbuf[m+FILTER2X_TAPS-1] = pin[8*m] >> 8;      // Scale down and add new data
-        filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
+        filter2x_b(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
     }        
 
     isr_exec.time();
@@ -137,7 +138,7 @@ int main()
     uint vco, postdiv1, postdiv2;
     int ret = check_sys_clock_khz(CLK_SYS/1000, &vco, &postdiv1, &postdiv2);
     printf("\n\nCHECKING CLOCK    %10ld %d %d %d %d\n", CLK_SYS, ret, vco, postdiv1, postdiv2);
-    sleep_ms(100);
+    sleep_ms(200);
 
     set_sys_clock_khz(CLK_SYS/1000, true);
     stdio_init_all();
@@ -199,7 +200,7 @@ int main()
     irq_set_enabled(DMA_IRQ_0, true);
     irq_set_priority(DMA_IRQ_0, 0);                                         // Make this the highest priority
 
-    sleep_ms(100);      // Allow clocks to settle
+    sleep_ms(200);      // Allow clocks to settle
 
     dma_start_channel_mask    (        0b11111);   // Start DMA first to make sure that the PIO has data
     pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
