@@ -77,10 +77,10 @@ stall:
 
 .program i2s_four_in
 ; I2S channel audio slaved from clock
-; Input pin: DI 
+; Input pins: DI0 DI1 DI2 DI3 
 ; JMP pin:   LRCK
 ; 50% LR CLK duty cycle
-; And falling edge LR is the start of frame
+; Group four I2S pins together to save on DMA controllers.  Needs to be de-interleaved though.
 
 
 public entry_point:

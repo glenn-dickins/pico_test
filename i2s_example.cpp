@@ -67,50 +67,42 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define     REG_VOLTAGE     VREG_VOLTAGE_1_25                               // Voltage regulator setting            
 #define     CLK_SYS         (288000000L)                                    // The system clock frequency
 //#define   CLK_SYS         (196800000L)                                    // This is slightly less jitter (PIO div is 1.00)
-#define     CLK_I2S         (48300)                                         // Single rate I2S frequency
+#define     CLK_I2S         (48000)                                         // Single rate I2S frequency
 #define     CLK_PIO         (2*CLK_I2S*64*2*16)                             // PIO execution rate (8 cycles each half bit of 2XI2S)
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
 #define     CLK_PIO_DIV_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
 
 
+static int32_t Table_Deinterleave4[256] = {
+   0x00000000, 0x00000001, 0x00000100, 0x00000101, 0x00010000, 0x00010001, 0x00010100, 0x00010101, 0x01000000, 0x01000001, 0x01000100, 0x01000101, 0x01010000, 0x01010001, 0x01010100, 0x01010101,
+   0x00000002, 0x00000003, 0x00000102, 0x00000103, 0x00010002, 0x00010003, 0x00010102, 0x00010103, 0x01000002, 0x01000003, 0x01000102, 0x01000103, 0x01010002, 0x01010003, 0x01010102, 0x01010103,
+   0x00000200, 0x00000201, 0x00000300, 0x00000301, 0x00010200, 0x00010201, 0x00010300, 0x00010301, 0x01000200, 0x01000201, 0x01000300, 0x01000301, 0x01010200, 0x01010201, 0x01010300, 0x01010301,
+   0x00000202, 0x00000203, 0x00000302, 0x00000303, 0x00010202, 0x00010203, 0x00010302, 0x00010303, 0x01000202, 0x01000203, 0x01000302, 0x01000303, 0x01010202, 0x01010203, 0x01010302, 0x01010303,
+   0x00020000, 0x00020001, 0x00020100, 0x00020101, 0x00030000, 0x00030001, 0x00030100, 0x00030101, 0x01020000, 0x01020001, 0x01020100, 0x01020101, 0x01030000, 0x01030001, 0x01030100, 0x01030101,
+   0x00020002, 0x00020003, 0x00020102, 0x00020103, 0x00030002, 0x00030003, 0x00030102, 0x00030103, 0x01020002, 0x01020003, 0x01020102, 0x01020103, 0x01030002, 0x01030003, 0x01030102, 0x01030103,
+   0x00020200, 0x00020201, 0x00020300, 0x00020301, 0x00030200, 0x00030201, 0x00030300, 0x00030301, 0x01020200, 0x01020201, 0x01020300, 0x01020301, 0x01030200, 0x01030201, 0x01030300, 0x01030301,
+   0x00020202, 0x00020203, 0x00020302, 0x00020303, 0x00030202, 0x00030203, 0x00030302, 0x00030303, 0x01020202, 0x01020203, 0x01020302, 0x01020303, 0x01030202, 0x01030203, 0x01030302, 0x01030303,
+   0x02000000, 0x02000001, 0x02000100, 0x02000101, 0x02010000, 0x02010001, 0x02010100, 0x02010101, 0x03000000, 0x03000001, 0x03000100, 0x03000101, 0x03010000, 0x03010001, 0x03010100, 0x03010101,
+   0x02000002, 0x02000003, 0x02000102, 0x02000103, 0x02010002, 0x02010003, 0x02010102, 0x02010103, 0x03000002, 0x03000003, 0x03000102, 0x03000103, 0x03010002, 0x03010003, 0x03010102, 0x03010103,
+   0x02000200, 0x02000201, 0x02000300, 0x02000301, 0x02010200, 0x02010201, 0x02010300, 0x02010301, 0x03000200, 0x03000201, 0x03000300, 0x03000301, 0x03010200, 0x03010201, 0x03010300, 0x03010301,
+   0x02000202, 0x02000203, 0x02000302, 0x02000303, 0x02010202, 0x02010203, 0x02010302, 0x02010303, 0x03000202, 0x03000203, 0x03000302, 0x03000303, 0x03010202, 0x03010203, 0x03010302, 0x03010303,
+   0x02020000, 0x02020001, 0x02020100, 0x02020101, 0x02030000, 0x02030001, 0x02030100, 0x02030101, 0x03020000, 0x03020001, 0x03020100, 0x03020101, 0x03030000, 0x03030001, 0x03030100, 0x03030101,
+   0x02020002, 0x02020003, 0x02020102, 0x02020103, 0x02030002, 0x02030003, 0x02030102, 0x02030103, 0x03020002, 0x03020003, 0x03020102, 0x03020103, 0x03030002, 0x03030003, 0x03030102, 0x03030103,
+   0x02020200, 0x02020201, 0x02020300, 0x02020301, 0x02030200, 0x02030201, 0x02030300, 0x02030301, 0x03020200, 0x03020201, 0x03020300, 0x03020301, 0x03030200, 0x03030201, 0x03030300, 0x03030301,
+   0x02020202, 0x02020203, 0x02020302, 0x02020303, 0x02030202, 0x02030203, 0x02030302, 0x02030303, 0x03020202, 0x03020203, 0x03020302, 0x03020303, 0x03030202, 0x03030203, 0x03030302, 0x03030303 };
 
-static int32_t table[256] = {0};
-/*
-    if (!init)
-    {
-        for (int n=0; n<256; n++) 
-        {
-            int32_t word = ( n    | n    << 12) & 0x000F000F;
-                    word = ( word | word <<  6) & 0x03030303;
-                    word = ( word | word <<  3) & 0x11111111;
-            table[n] = word;
-        }
-        init = true;
-    }
-*/
-
-inline int32_t interleave_0(uint8_t a)
+uint32_t inline deinterleave4(uint32_t x)
 {
-    return table[a];
+    return Table_Deinterleave4[x & 0xFF] | (Table_Deinterleave4[(x >> 8) & 0xFF] << 2) | (Table_Deinterleave4[(x >> 16) & 0xFF] << 4) | (Table_Deinterleave4[(x >> 24) & 0xFF] << 6);
 }
 
 
 
-inline int32_t interleave(char a, char b, char c, char d)
-{
-    return interleave_0(a)<<3 | interleave_0(b)<<2 | interleave_0(c)<<1 | interleave_0(d);
-}
-
-
-
-// DMA Setup
 #define ISR_BLOCK     8           // Number of samples at 48kHz that we lump into each ISR call
-//int32_t audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
-int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
-int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
-int32_t   audio_int[1][2][ISR_BLOCK][16] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
 
-
+int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };    // One 8 ch TDM injest
+int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };    // Outut four lines of double rate I2S
+int32_t   audio_int[1][2][ISR_BLOCK][8] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };    // Interleaved I2S from the i2s_four_in
 int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                     // 8 channels of FIR buffer
 
 using namespace DAES67;
@@ -122,13 +114,66 @@ Histogram   isr_exec("ISR Exec Time", 0, 0.0002);
 // Called when a full block of data has been written into audio_tdm
 static void dma_handler(void) 
 {
-    dma_hw->ints0 = 0b100000000;                    // No rush for this, and should never re-enter
+    dma_hw->ints0 = 1u;                             // No rush for this, and should never re-enter
     int64_t time = isr_call.time();                 // Mark the ISR call time and setup for
     isr_exec.start(time);                           // measuring execution time
 
     int block = (void *)dma_hw->ch[0].read_addr >= &audio_out[0][1][0][0];       // Determine which double buffer to use
 
-    // Move all of the TDM data into the I2S data buffers and filter             // Takes about 50us for 8 LRCLKs
+/*
+    // Deinterleave data from I2S four pin, into the tdm buffer     // About <2us per LRCLKS @300MHz
+    uint32_t *pin  = (uint32_t *)&audio_int[0][block][0][0];
+    uint8_t  *pout = (uint8_t  *)&audio_tdm[0][block][0][0];
+    uint32_t word;
+    for (int n=0; n<ISR_BLOCK; n++)
+    {
+        word = deinterleave4(*pin++);
+        *(pout    ) = (word    )&0xFF;
+        *(pout + 8) = (word>> 8)&0xFF;
+        *(pout +16) = (word>>16)&0xFF;
+        *(pout +24) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 1) = (word    )&0xFF;
+        *(pout + 9) = (word>> 8)&0xFF;
+        *(pout +17) = (word>>16)&0xFF;
+        *(pout +25) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 2) = (word    )&0xFF;
+        *(pout +10) = (word>> 8)&0xFF;
+        *(pout +18) = (word>>16)&0xFF;
+        *(pout +26) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 3) = (word    )&0xFF;
+        *(pout +11) = (word>> 8)&0xFF;
+        *(pout +19) = (word>>16)&0xFF;
+        *(pout +27) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 4) = (word    )&0xFF;
+        *(pout +12) = (word>> 8)&0xFF;
+        *(pout +20) = (word>>16)&0xFF;
+        *(pout +28) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 5) = (word    )&0xFF;
+        *(pout +13) = (word>> 8)&0xFF;
+        *(pout +21) = (word>>16)&0xFF;
+        *(pout +29) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 6) = (word    )&0xFF;
+        *(pout +14) = (word>> 8)&0xFF;
+        *(pout +22) = (word>>16)&0xFF;
+        *(pout +30) = (word>>24)&0xFF;
+        word = deinterleave4(*pin++);
+        *(pout + 7) = (word    )&0xFF;
+        *(pout +15) = (word>> 8)&0xFF;
+        *(pout +23) = (word>>16)&0xFF;
+        *(pout +31) = (word>>24)&0xFF;
+        pout += 32;
+    }
+    isr_exec.time();
+*/
+
+
+    // Move all of the TDM data into the I2S data buffers and filter    // About 6us per LRCLK at @300MHz
     for (int n = 0; n < 8; n++)
     {
         int32_t *pbuf = audio_buf[n];
@@ -138,23 +183,8 @@ static void dma_handler(void)
         filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
     }        
     //audio_out[0][0][0][0] = 0xFFFFFFFF;           // Debugging marker
-
-    /* Interleave the 4 channels of 2X data 4 line single channel               // Takes about 25us for 8 LRCLKs
-    uint8_t *p0   = (uint8_t *)&audio_out[0][block][0][0];
-    uint8_t *p1   = (uint8_t *)&audio_out[1][block][0][0];
-    uint8_t *p2   = (uint8_t *)&audio_out[2][block][0][0];
-    uint8_t *p3   = (uint8_t *)&audio_out[3][block][0][0];
-    int32_t *pout = (int32_t *)&audio_int[0][block][0][0];
-    for (int n=0; n<ISR_BLOCK; n++)
-    {
-        for (int m=0; m<16; m++)
-        {
-            *pout++ = interleave(*p0++, *p1++, *p2++, *p3++);
-        }
-    } 
-    */       
     
-    isr_exec.time();
+//    isr_exec.time();
 }
 
 // Create a DMA pair to manage a double buffered transfer
@@ -205,9 +235,6 @@ int main()
     set_sys_clock_khz(CLK_SYS/1000, true);
     stdio_init_all();
 
-    printf("Interleave Test 0x%08lX\n",interleave(0xFF,0x00,0xFF,0x00)); 
-
-
     printf("\n\n\n\n");
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
     printf("SYSTEM CLOCK ACTUAL:        %10ld\n\n", clock_get_hz(clk_sys));
@@ -246,6 +273,8 @@ int main()
     // PIO0 is responsible for the input I2S or TDM
     uint offset = pio_add_program (pio0, &tdm_in_program);
     tdm_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    dma_setup  (0, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_tdm[0],  true);          // Interrupt each time receive block is done
+
 
     // PIO1 is responsible for the output double rate I2S
     offset = pio_add_program  (pio1, &i2s_double_out_program);
@@ -254,11 +283,10 @@ int main()
     i2s_double_out_init       (pio1, 2, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, 3, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
-    dma_setup(0, pio1, 0, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[0]);       // Dual data and control DMAs
-    dma_setup(2, pio1, 1, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[1]);
-    dma_setup(4, pio1, 2, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[2]);
-    dma_setup(6, pio1, 3, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[3]);
-    dma_setup(8, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_tdm[0],true);  // Interrupt each time receive block is done
+    dma_setup(2, pio1, 0, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[0]);                   // Dual data and control DMAs
+    dma_setup(4, pio1, 1, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[1]);
+    dma_setup(6, pio1, 2, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[2]);
+    dma_setup(8, pio1, 3, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[3]);
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
@@ -285,9 +313,6 @@ int main()
         printf("%s\n", str);
         isr_exec.text(20, str);
         printf("%s\n\n", str);
-
-        printf("Interleave Test 0x%08lX\n",interleave(str[0],str[1],str[2],str[3])); 
-
 
         for (int n=0; n<20; n++)
         {
