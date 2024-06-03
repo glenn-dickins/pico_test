@@ -1,74 +1,113 @@
-; An I2S full duplex slave with an associated output dual rate I2S port.
+; A set of useful I2S and TDM routines for DickinsAudio projects
 ;
-; Uses a set of 7 pins
-;
-; DO DI BCLK LRCLK    DO BCLKx2 LRCLKx2
+; Pins are generally reassignable in the following groups
+; BCLK   LRCLK          Sequential Pins for Input bit clock and 50% duty cycle falling edge start I2S or TDM
+; BCLKx2 LRCLKx2        Sequential Pins Output bit clock at 2x the LRCLK frame rate for I2S
+; D                     Data pin out for the i2s_double_out or tdm_in
+; D0 D1 D2 D3           Sequential Pins for the Input I2S 4 group
 ;
 
 .program tdm_in
 ; TDM 8 channel audio slaved from clock
-; Input pin: D0
+; Input pin: DI
 ; JMP pin:   LRCK
+; 
 ; Still expects a 50% LR CLK duty cycle
 ; And falling edge LR is the start of frame
+; 
+; Only syncs once a frame, so frame rate must be 2000ppm in range
+;
 
 
-public entry_point: 
-    set x, 7
-    set y, 29
-stall1:
-    jmp pin stall1      ; Wait for falling edge of LRCLK
-    jmp bit       [23]  ; First bit of first word on second rising
-frame:
-    nop           [12]
+public entry_point:
+    jmp pin entry_point                 ; Wait for LRCLK to fall
+    set x, 7                            ; 8 words in a frame
+    set y, 29                           ; 32 bits in a word (one is with push and one at end)
+    jmp bit              [21]           ; Skip the first 1.5 clock cycle and the first push
+word:
+    nop                  [12]           ; Wait out the rest of the last cycle
 .wrap_target
-    in pins, 1    [7]
-    push noblock  [7]
+    in pins, 1            [7]           ; Get last bit of the word
+    push noblock          [7]
 bit:
-    in pins, 1    [7]
-    jmp y-- bit   [7]
-    in pins, 1  
-start:
-    set y, 29     
-    jmp x-- frame
+    in pins, 1            [7]           ; Get a bit
+    jmp y-- bit           [7]           ;  
+    in pins, 1
+    set y, 29                           ;
+    jmp x-- word                        ; Repeat this 8 times
 stall:
-    jmp pin stall        ; Wait for fall of LRCLK
-    set x,7        [7] 
-.wrap
+    jmp pin stall                       ; Wait for LRCLK to fall
+    set x, 7              [7]           ; Skip the first half clock cycle
+.wrap                                   ; Return to the start
+
 
 
 .program i2s_in
 ; I2S channel audio slaved from clock
-; Input pin: D0 
+; Input pin: DI 
 ; JMP pin:   LRCK
 ; 50% LR CLK duty cycle
 ; And falling edge LR is the start of frame
 
 
-public entry_point: 
-    set x, 1
-    set y, 29
-stall1:
-    jmp pin stall1      ; Wait for falling edge of LRCLK
-    nop           [31]  ;
-    nop           [31]
-    jmp bit       [31]  ; First bit of first word on second rising
-frame:
-    nop           [12]
+public entry_point:
+    jmp pin entry_point                 ; Wait for LRCLK to fall
+    set x, 1                            ; 2 words in a frame
+    set y, 29                           ; 32 bits in a word (one is with push and one at end)
+    nop                  [29]
+    nop                  [31]
+    jmp bit              [31]           ; Skip the first 1.5 clock cycle and the first push
+word:
+    nop                  [28]           ; Wait out the rest of the last cycle
+    nop                  [31]
 .wrap_target
-    in pins, 1    [31]
-    push noblock  [31]
+    in pins, 1           [31]           ; Get last bit of the word
+    push noblock         [31]
 bit:
-    in pins, 1    [31]
-    jmp y-- bit   [31]
-    in pins, 1  
-start:
-    set y, 29     
-    jmp x-- frame
+    in pins, 1           [31]           ; Get a bit
+    jmp y-- bit          [31]           ;  
+    in pins, 1
+    set y, 29                           ;
+    jmp x-- word                        ; Repeat this 8 times
 stall:
-    jmp pin stall        ; Wait for fall of LRCLK
-    set x,1        [31] 
-.wrap
+    jmp pin stall                       ; Wait for LRCLK to fall
+    set x, 1             [31]           ; Skip the first half clock cycle
+.wrap                                   ; Return to the start
+
+
+.program i2s_four_in
+; I2S channel audio slaved from clock
+; Input pin: DI 
+; JMP pin:   LRCK
+; 50% LR CLK duty cycle
+; And falling edge LR is the start of frame
+
+
+public entry_point:
+    jmp pin entry_point                 ; Wait for LRCLK to fall
+    set x, 1                            ; 2 words in a frame
+    set y, 29                           ; 32 bits in a word (one is with push and one at end)
+    nop                  [29]
+    nop                  [31]
+    jmp bit              [31]           ; Skip the first 1.5 clock cycle and the first push
+word:
+    nop                  [28]           ; Wait out the rest of the last cycle
+    nop                  [31]
+.wrap_target
+    in pins, 4           [31]           ; Get last bit of the word
+    push noblock         [31]
+bit:
+    in pins, 4           [31]           ; Get a bit
+    jmp y-- bit          [31]           ;  
+    in pins, 4
+    set y, 29                           ;
+    jmp x-- word                        ; Repeat this 8 times
+stall:
+    jmp pin stall                       ; Wait for LRCLK to fall
+    set x, 1             [31]           ; Skip the first half clock cycle
+.wrap                                   ; Return to the start
+
+
 
 
 
@@ -80,8 +119,9 @@ stall:
 ; Jump pin         LRCLK
 ; 
 ; No idea why, but a wait 0 pin 1 is 10ns slower than any other wait.
-; Since it is OK for output to be a bit later, use JMP pin for LRCLK and latch on
-; fall of BCLK so that all new LRCLK2 edges are low jitter.
+; This design resets to BCLK four times a frame in order to minimize jitter of the output clocks
+; against the incoming clocks.  
+;
 
 .side_set 2
 
@@ -134,8 +174,6 @@ static inline void tdm_in_init(PIO pio, int sm, int offset, int lrclk, int din, 
     sm_config_set_jmp_pin      (&sm_config, lrclk);
     sm_config_set_in_shift     (&sm_config, false, false, 0);
     pio_sm_init(pio, sm, offset + tdm_in_offset_entry_point, &sm_config);
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
     uint32_t pin_mask = (1 << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
     pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
@@ -156,39 +194,47 @@ static inline void i2s_double_out_init(PIO pio, int sm, int offset, int bclk, in
     sm_config_set_jmp_pin      (&sm_config, bclk+1);
     sm_config_set_out_shift    (&sm_config, false, false, 32);
     pio_sm_init(pio, sm, offset + i2s_double_out_offset_entry_point, &sm_config);
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
-    pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_y, pio_null));   
 
     uint32_t pin_mask = (1 << dout) | (3 << bclk2);               // Data out and two clocks
     pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
     pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
+
     pin_mask = (3 << bclk);                                    // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
-
+    
     pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
 }
 
-static inline void i2s_in(PIO pio, uint8_t sm, uint8_t offset, uint8_t pin_base) 
+static inline void i2s_in_init(PIO pio, uint8_t sm, int offset, int lrclk, int din, int divN, int divF) 
 {
-    pio_gpio_init(pio, pin_base + 0);       // DO
-    pio_gpio_init(pio, pin_base + 1);       // DI
-    pio_gpio_init(pio, pin_base + 2);       // BCLK
-    pio_gpio_init(pio, pin_base + 3);       // LRCLK
+    pio_gpio_init(pio, lrclk);
+    pio_gpio_init(pio, din);
 
     pio_sm_config sm_config = i2s_in_program_get_default_config(offset);
-    sm_config_set_out_pins (&sm_config, pin_base, 1);
-    sm_config_set_in_pins  (&sm_config, pin_base + 1);
-    sm_config_set_jmp_pin  (&sm_config, pin_base + 3);
-    sm_config_set_out_shift(&sm_config, false, false, 0);
+    sm_config_set_in_pins  (&sm_config, din);
+    sm_config_set_jmp_pin  (&sm_config, lrclk);
     sm_config_set_in_shift (&sm_config, false, false, 0);
-    pio_sm_init(pio, sm, offset, &sm_config);
-
-    uint32_t pin_mask = (0b0000001 << pin_base);            // Single output pin
-    pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask); 
-    pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
-
-    pin_mask = (0b00001110 << pin_base);                    // Three input pins
+    pio_sm_init(pio, sm, offset + i2s_in_offset_entry_point, &sm_config);
+    uint32_t pin_mask = (1 << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
 }
+
+static inline void i2s_four_in(PIO pio, uint8_t sm, int offset, int lrclk, int din, int divN, int divF) 
+{
+    pio_gpio_init(pio, lrclk);
+    pio_gpio_init(pio, din);
+
+    pio_sm_config sm_config = i2s_four_in_program_get_default_config(offset);
+    sm_config_set_in_pins  (&sm_config, din);
+    sm_config_set_jmp_pin  (&sm_config, lrclk);
+    sm_config_set_in_shift (&sm_config, false, false, 0);
+    pio_sm_init(pio, sm, offset + i2s_four_in_offset_entry_point, &sm_config);
+    uint32_t pin_mask = (1 << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
+    pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
+    pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
+}
+
+
 
 %}

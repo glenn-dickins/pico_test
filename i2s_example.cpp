@@ -120,7 +120,6 @@ Histogram   isr_exec("ISR Exec Time", 0, 0.0002);
 
 
 // Called when a full block of data has been written into audio_tdm
-int interrupt = 0;
 static void dma_handler(void) 
 {
     dma_hw->ints0 = 0b100000000;                    // No rush for this, and should never re-enter
@@ -266,8 +265,8 @@ int main()
     irq_set_priority(DMA_IRQ_0, 0);                     // Make this the highest priority
     dma_start_channel_mask(0b0101010101);               // Start all of the data DMAs
 
-    while ( gpio_get(I2S_LRCLK));                       // Wait for a falling clock edge
-    while (!gpio_get(I2S_LRCLK)); 
+    while ( gpio_get(I2S_LRCLK));                       // Wait for LR Clk to be low
+    while (!gpio_get(I2S_LRCLK));                       // Wait for a rising edge - machine sync on first fall
     pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);   
 
