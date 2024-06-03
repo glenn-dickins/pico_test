@@ -67,10 +67,39 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #define     REG_VOLTAGE     VREG_VOLTAGE_1_25                               // Voltage regulator setting            
 #define     CLK_SYS         (288000000L)                                    // The system clock frequency
 //#define   CLK_SYS         (196800000L)                                    // This is slightly less jitter (PIO div is 1.00)
-#define     CLK_I2S         (48000)                                         // Single rate I2S frequency
+#define     CLK_I2S         (48300)                                         // Single rate I2S frequency
 #define     CLK_PIO         (2*CLK_I2S*64*2*16)                             // PIO execution rate (8 cycles each half bit of 2XI2S)
 #define     CLK_PIO_DIV_N   ((int)(CLK_SYS/CLK_PIO))                        // PIO clock divider integer part
 #define     CLK_PIO_DIV_F   ((int)(((CLK_SYS%CLK_PIO)*256LL+128)/CLK_PIO))  // PIO clock divider fractional part
+
+
+
+static int32_t table[256] = {0};
+/*
+    if (!init)
+    {
+        for (int n=0; n<256; n++) 
+        {
+            int32_t word = ( n    | n    << 12) & 0x000F000F;
+                    word = ( word | word <<  6) & 0x03030303;
+                    word = ( word | word <<  3) & 0x11111111;
+            table[n] = word;
+        }
+        init = true;
+    }
+*/
+
+inline int32_t interleave_0(uint8_t a)
+{
+    return table[a];
+}
+
+
+
+inline int32_t interleave(char a, char b, char c, char d)
+{
+    return interleave_0(a)<<3 | interleave_0(b)<<2 | interleave_0(c)<<1 | interleave_0(d);
+}
 
 
 
@@ -79,6 +108,9 @@ const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 //int32_t audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };     // Four 2 ch I2S injest
 int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };     // One 8 ch TDM injest
 int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
+int32_t   audio_int[1][2][ISR_BLOCK][16] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };
+
+
 int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                     // 8 channels of FIR buffer
 
 using namespace DAES67;
@@ -97,7 +129,7 @@ static void dma_handler(void)
 
     int block = (void *)dma_hw->ch[0].read_addr >= &audio_out[0][1][0][0];       // Determine which double buffer to use
 
-    // Move all of the TDM data into the I2S data buffers
+    // Move all of the TDM data into the I2S data buffers and filter             // Takes about 50us for 8 LRCLKs
     for (int n = 0; n < 8; n++)
     {
         int32_t *pbuf = audio_buf[n];
@@ -108,6 +140,21 @@ static void dma_handler(void)
     }        
     //audio_out[0][0][0][0] = 0xFFFFFFFF;           // Debugging marker
 
+    /* Interleave the 4 channels of 2X data 4 line single channel               // Takes about 25us for 8 LRCLKs
+    uint8_t *p0   = (uint8_t *)&audio_out[0][block][0][0];
+    uint8_t *p1   = (uint8_t *)&audio_out[1][block][0][0];
+    uint8_t *p2   = (uint8_t *)&audio_out[2][block][0][0];
+    uint8_t *p3   = (uint8_t *)&audio_out[3][block][0][0];
+    int32_t *pout = (int32_t *)&audio_int[0][block][0][0];
+    for (int n=0; n<ISR_BLOCK; n++)
+    {
+        for (int m=0; m<16; m++)
+        {
+            *pout++ = interleave(*p0++, *p1++, *p2++, *p3++);
+        }
+    } 
+    */       
+    
     isr_exec.time();
 }
 
@@ -143,11 +190,11 @@ int dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t 
     return dma;
 }
 
-
 void core1(void) { while(1); };
 
 int main() 
 {
+
     vreg_set_voltage(REG_VOLTAGE);
     stdio_init_all();
     
@@ -158,6 +205,9 @@ int main()
 
     set_sys_clock_khz(CLK_SYS/1000, true);
     stdio_init_all();
+
+    printf("Interleave Test 0x%08lX\n",interleave(0xFF,0x00,0xFF,0x00)); 
+
 
     printf("\n\n\n\n");
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
@@ -236,6 +286,9 @@ int main()
         printf("%s\n", str);
         isr_exec.text(20, str);
         printf("%s\n\n", str);
+
+        printf("Interleave Test 0x%08lX\n",interleave(str[0],str[1],str[2],str[3])); 
+
 
         for (int n=0; n<20; n++)
         {

@@ -7,7 +7,7 @@
 
 .program tdm_in
 ; TDM 8 channel audio slaved from clock
-; Input pin:
+; Input pin: D0
 ; JMP pin:   LRCK
 ; Still expects a 50% LR CLK duty cycle
 ; And falling edge LR is the start of frame
@@ -28,6 +28,7 @@ bit:
     in pins, 1    [7]
     jmp y-- bit   [7]
     in pins, 1  
+start:
     set y, 29     
     jmp x-- frame
 stall:
@@ -36,73 +37,87 @@ stall:
 .wrap
 
 
-
-
 .program i2s_in
-; I2S audio input slaved from clock
-; Input pin order: DIN, BCK, LRCK
+; I2S channel audio slaved from clock
+; Input pin: D0 
+; JMP pin:   LRCK
+; 50% LR CLK duty cycle
+; And falling edge LR is the start of frame
 
-frame:
-    nop           [28]
+
+public entry_point: 
+    set x, 1
+    set y, 29
+stall1:
+    jmp pin stall1      ; Wait for falling edge of LRCLK
+    nop           [31]  ;
     nop           [31]
- .wrap_target
+    jmp bit       [31]  ; First bit of first word on second rising
+frame:
+    nop           [12]
+.wrap_target
     in pins, 1    [31]
     push noblock  [31]
 bit:
     in pins, 1    [31]
     jmp y-- bit   [31]
     in pins, 1  
-public entry_point:
+start:
     set y, 29     
     jmp x-- frame
-    set x,3
-    wait 1  pin 0       ;   Sync on the falling edge of LRCLK
-    wait 0  pin 0 [31]  ;
+stall:
+    jmp pin stall        ; Wait for fall of LRCLK
+    set x,1        [31] 
 .wrap
-
 
 
 
 .program i2s_double_out
 ; I2S audio output master running at 2x the i2s_duplex block (using same input framing).
 ;
-; Input pin order: BCLK LRCK
+; Input pin order: BCLK
 ; Output order:    DO    BCKx2, LRCKx2 (side)
+; Jump pin         LRCLK
 ; 
+; No idea why, but a wait 0 pin 1 is 10ns slower than any other wait.
+; Since it is OK for output to be a bit later, use JMP pin for LRCLK and latch on
+; fall of BCLK so that all new LRCLK2 edges are low jitter.
 
 .side_set 2
 
-frame:
-    wait 1 pin 1            side 0b11   ; Wait for rising LRCLK
+public entry_point:
 .wrap_target
+    jmp pin entry_point     side 0b11   ; Wait for LRCLK to fall
+frame:
+    wait 1 pin 0            side 0b11   ; Wait for BCLK
+    wait 0 pin 0            side 0b11   ; Wait for BCLK to fall
     out pins, 1   [7]       side 0b00   ; First bit is from last I2S frame
     nop           [7]       side 0b00
     pull noblock  [7]       side 0b01
-    set y, 30     [7]       side 0b01
+    set y, 30     [2]       side 0b01
 bit0:
+    nop           [4]       side 0b01 
     out pins, 1   [7]       side 0b00   ; 31 bits from the freshly pulled word
     nop           [7]       side 0b00
     nop           [7]       side 0b01
-    jmp y-- bit0  [7]       side 0b01
+    jmp y-- bit0  [2]       side 0b01
 
+    wait 1 pin 0            side 0b01   ; Resync to falling edge of BCLK
+    wait 0 pin 0            side 0b01 
     out pins, 1   [7]       side 0b10   ; Last bit and signal second half of 96kHz frames
-    set y, 29     [7]       side 0b10
+    nop           [7]       side 0b10
     pull noblock  [7]       side 0b11
-    nop           [7]       side 0b11   
+    set y, 30     [1]       side 0b11   
 bit1:
-    out pins, 1   [7]       side 0b10   ; 30 bits from the newly pulled frame
+    nop           [5]       side 0b11
+    out pins, 1   [7]       side 0b10   ; 31 bits from the newly pulled frame
     nop           [7]       side 0b10
     nop           [7]       side 0b11
-    jmp y-- bit1  [7]       side 0b11
-
-    out pins, 1   [7]       side 0b10   ; An additional bit as we decide to do second
-    nop           [7]       side 0b10   ; word of data in the 96kHz frame, or else ...
-    jmp x-- frame [7]       side 0b11   
-public entry_point:
-    set x, 1                side 0b11   ; Two of these frames for each old LRCLK
-    wait 1  pin 1           side 0b11   ; Hard sync on the falling edge of LRCLK
-    wait 0  pin 1           side 0b11
+    jmp y-- bit1  [1]       side 0b11   
+    jmp pin frame           side 0b11   ; If this is second half of frame, don't wait for LRCLK fall
 .wrap
+
+
 
 
 
@@ -138,6 +153,7 @@ static inline void i2s_double_out_init(PIO pio, int sm, int offset, int bclk, in
     sm_config_set_out_pins     (&sm_config, dout, 1);
     sm_config_set_in_pins      (&sm_config, bclk);
     sm_config_set_sideset_pins (&sm_config, bclk2);
+    sm_config_set_jmp_pin      (&sm_config, bclk+1);
     sm_config_set_out_shift    (&sm_config, false, false, 32);
     pio_sm_init(pio, sm, offset + i2s_double_out_offset_entry_point, &sm_config);
     pio_sm_exec_wait_blocking  (pio, sm, pio_encode_mov (pio_x, pio_null));     // Initialize the X and Y registers
