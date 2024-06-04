@@ -99,7 +99,7 @@ uint32_t inline deinterleave4(uint32_t x)
 
 // TODO THIS IS WORKING FOR 16 BUT NOT FOR 8 - Some sort of block addressing issue
 
-#define ISR_BLOCK    8           // Number of samples at 48kHz that we lump into each ISR call
+#define ISR_BLOCK    4           // Number of samples at 48kHz that we lump into each ISR call
 
 int32_t   audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*2*ISR_BLOCK*4))) = { };    // Single line of normal rate I2S
 int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };    // One 8 ch TDM injest
@@ -174,7 +174,7 @@ static void dma_handler(void)
 */
 
 
-    /* Move the I2S data into the TDM buffers
+    // Move the I2S data into the TDM buffers
     {
         int32_t *pin  = audio_i2s[0][block][0];
         int32_t *pout = audio_tdm[0][block][0];
@@ -185,17 +185,17 @@ static void dma_handler(void)
             pout+=6;
         }
     }
-    */
+    
    
     // Move all of the TDM data into the I2S data buffers and filter    // About 6us per LRCLK at @300MHz
     for (int n = 0; n < 8; n++)
     {
         int32_t *pbuf = audio_buf[n];
         int32_t *pin  = &audio_tdm[0][block][0][n];
-    //    for (int m=0; m<FILTER2X_TAPS-1; m++) pbuf[m]                 = pbuf[m+ISR_BLOCK];  // Move the FIR buffer along
-//        for (int m=0; m<ISR_BLOCK; m++)       pbuf[m+FILTER2X_TAPS-1] = pin[8*m] >> 8;      // Scale down and add new data
-  //      filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
-        for (int m=0; m<ISR_BLOCK; m++) audio_out[n/2][block][0][n%2] = pin[8*m];
+        for (int m=0; m<FILTER2X_TAPS-1; m++) pbuf[m]                 = pbuf[m+ISR_BLOCK];  // Move the FIR buffer along
+        for (int m=0; m<ISR_BLOCK; m++)       pbuf[m+FILTER2X_TAPS-1] = pin[8*m] >> 8;      // Scale down and add new data
+        filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
+        //for (int m=0; m<ISR_BLOCK; m++) audio_out[n/2][block][m][n%2] = pin[8*m];
     }        
     
 
@@ -294,13 +294,13 @@ int main()
     printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIV_F / 256.0f))));
     
     // PIO0 is responsible for the input I2S or TDM
-    //uint offset = pio_add_program (pio0, &i2s_in_program);
-    //i2s_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    //dma_setup  (0, pio0, 0, IN,  2*ISR_BLOCK, (int32_t *)audio_i2s[0],  true);          // Interrupt each time receive block is done
+    uint offset = pio_add_program (pio0, &i2s_in_program);
+    i2s_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    dma_setup  (0, pio0, 0, IN,  2*ISR_BLOCK, (int32_t *)audio_i2s[0],  true);          // Interrupt each time receive block is done
 
-    uint offset = pio_add_program (pio0, &tdm_in_program);
-    tdm_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    dma_setup  (0, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_tdm[0],  true);          // Interrupt each time receive block is done
+    //uint offset = pio_add_program (pio0, &tdm_in_program);
+    //tdm_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    //dma_setup  (0, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_tdm[0],  true);          // Interrupt each time receive block is done
 
     // PIO1 is responsible for the output double rate I2S
     offset = pio_add_program  (pio1, &i2s_double_out_program);

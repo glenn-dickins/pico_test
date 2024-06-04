@@ -36,8 +36,8 @@ bit:
     set y, 29                           ;
     jmp x-- word                        ; Repeat this 8 times
 stall0:
-;    jmp pin stall1                      ; Wait for LRCLK to become
-;    jmp stall0                          ; high (should already be high)
+    jmp pin stall1                      ; Wait for LRCLK to become
+    jmp stall0                          ; high (should already be high)
 stall1:
     jmp pin stall1                      ; Wait for LRCLK to fall
     set x, 7              [7]           ; Skip the first half clock cycle
