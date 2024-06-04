@@ -126,38 +126,43 @@ stall:
 .side_set 2
 
 public entry_point:
-.wrap_target
-    jmp pin entry_point     side 0b11   ; Wait for LRCLK to fall                    ; TODO AN ISSUE HERE AS THIS WILL ALREADY BE THE CASE ON WRAP
+    set x, 1                side 0b11   ; Count of which sub frame we are in
+    wait 1 pin 1            side 0b11   ; If it low, wait for LRCLK high
+    wait 0 pin 1            side 0b11   ; Synchronous fall
 frame:
+.wrap_target
+    out pins, 1   [7]       side 0b10   ; Need to delay until a definite 
+    nop           [7]       side 0b10   ; clear falling edge of BCLK for both
+    nop           [7]       side 0b11   ; I2S and TDM input
+    nop           [7]       side 0b11   ;
+    out pins, 1   [7]       side 0b10   ; 
+    nop           [7]       side 0b10   ;
+    nop           [7]       side 0b11   ;
     wait 1 pin 0            side 0b11   ; Wait for BCLK
     wait 0 pin 0            side 0b11   ; Wait for BCLK to fall
-    out pins, 1   [7]       side 0b00   ; First bit is from last I2S frame
-    nop           [7]       side 0b00
+    out pins, 1   [7]       side 0b00   ; Drop LR and first bit is from last I2S frame
+    set y,30      [7]       side 0b00
     pull noblock  [7]       side 0b01
-    set y, 30     [2]       side 0b01
 bit0:
-    nop           [4]       side 0b01 
+    nop           [7]       side 0b01 
     out pins, 1   [7]       side 0b00   ; 31 bits from the freshly pulled word
     nop           [7]       side 0b00
-    nop           [7]       side 0b01
-    jmp y-- bit0  [2]       side 0b01
+    jmp y-- bit0  [7]       side 0b01
 
+    set y, 28               side 0b01
     wait 1 pin 0            side 0b01   ; Resync to falling edge of BCLK
     wait 0 pin 0            side 0b01 
     out pins, 1   [7]       side 0b10   ; Last bit and signal second half of 96kHz frames
     nop           [7]       side 0b10
     pull noblock  [7]       side 0b11
-    set y, 30     [1]       side 0b11   
 bit1:
-    nop           [5]       side 0b11
+    nop           [7]       side 0b11
     out pins, 1   [7]       side 0b10   ; 31 bits from the newly pulled frame
     nop           [7]       side 0b10
-    nop           [7]       side 0b11
-    jmp y-- bit1  [1]       side 0b11   
-    jmp pin frame           side 0b11   ; If this is second half of frame, don't wait for LRCLK fall
+    jmp y-- bit1  [7]       side 0b11   
+    jmp !x entry_point      side 0b11   ; Second time through restart
+    set x,0       [6]       side 0b11   ; Flag second time through
 .wrap
-
-
 
 
 
