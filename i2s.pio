@@ -35,8 +35,11 @@ bit:
     in pins, 1
     set y, 29                           ;
     jmp x-- word                        ; Repeat this 8 times
-stall:
-    jmp pin stall                       ; Wait for LRCLK to fall
+stall0:
+;    jmp pin stall1                      ; Wait for LRCLK to become
+;    jmp stall0                          ; high (should already be high)
+stall1:
+    jmp pin stall1                      ; Wait for LRCLK to fall
     set x, 7              [7]           ; Skip the first half clock cycle
 .wrap                                   ; Return to the start
 
@@ -69,8 +72,11 @@ bit:
     in pins, 1
     set y, 29                           ;
     jmp x-- word                        ; Repeat this 8 times
-stall:
-    jmp pin stall                       ; Wait for LRCLK to fall
+stall0:
+    jmp pin stall1                      ; Wait for LRCLK to become
+    jmp stall0                          ; high (should already be high)
+stall1:
+    jmp pin stall1                      ; Wait for LRCLK to fall
     set x, 1             [31]           ; Skip the first half clock cycle
 .wrap                                   ; Return to the start
 
@@ -85,7 +91,7 @@ stall:
 
 public entry_point:
     jmp pin entry_point                 ; Wait for LRCLK to fall
-    set x, 1                            ; 2 words in a frame
+    set x, 7                            ; 2 words in a frame
     set y, 29                           ; 32 bits in a word (one is with push and one at end)
     nop                  [29]
     nop                  [31]
@@ -102,9 +108,12 @@ bit:
     in pins, 4
     set y, 29                           ;
     jmp x-- word                        ; Repeat this 8 times
-stall:
-    jmp pin stall                       ; Wait for LRCLK to fall
-    set x, 1             [31]           ; Skip the first half clock cycle
+stall0:
+    jmp pin stall1                      ; Wait for LRCLK to become
+    jmp stall0                          ; high (should already be high)
+stall1:
+    jmp pin stall1                      ; Wait for LRCLK to fall
+    set x, 7             [31]           ; Skip the first half clock cycle
 .wrap                                   ; Return to the start
 
 
