@@ -91,8 +91,8 @@ stall1:
 
 public entry_point:
     jmp pin entry_point                 ; Wait for LRCLK to fall
-    set x, 7                            ; 2 words in a frame
-    set y, 29                           ; 32 bits in a word (one is with push and one at end)
+    set x, 7                            ; 7 words in a frame
+    set y, 5                            ; 32 (4 + 6*4 + 4) bits in a word
     nop                  [29]
     nop                  [31]
     jmp bit              [31]           ; Skip the first 1.5 clock cycle and the first push
@@ -106,7 +106,7 @@ bit:
     in pins, 4           [31]           ; Get a bit
     jmp y-- bit          [31]           ;  
     in pins, 4
-    set y, 29                           ;
+    set y, 5                           ;
     jmp x-- word                        ; Repeat this 8 times
 stall0:
     jmp pin stall1                      ; Wait for LRCLK to become
@@ -234,17 +234,20 @@ static inline void i2s_in_init(PIO pio, uint8_t sm, int offset, int lrclk, int d
     pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
 }
 
-static inline void i2s_four_in(PIO pio, uint8_t sm, int offset, int lrclk, int din, int divN, int divF) 
+static inline void i2s_four_in_init(PIO pio, uint8_t sm, int offset, int lrclk, int din, int divN, int divF) 
 {
     pio_gpio_init(pio, lrclk);
     pio_gpio_init(pio, din);
+    pio_gpio_init(pio, din+1);
+    pio_gpio_init(pio, din+2);
+    pio_gpio_init(pio, din+3);
 
     pio_sm_config sm_config = i2s_four_in_program_get_default_config(offset);
     sm_config_set_in_pins  (&sm_config, din);
     sm_config_set_jmp_pin  (&sm_config, lrclk);
     sm_config_set_in_shift (&sm_config, false, false, 0);
     pio_sm_init(pio, sm, offset + i2s_four_in_offset_entry_point, &sm_config);
-    uint32_t pin_mask = (1 << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
+    uint32_t pin_mask = (0xF << din) | (1 << lrclk);                                       // Everything synced off LR clock normal rate
     pio_sm_set_pindirs_with_mask(pio, sm, 0, pin_mask);
     pio_sm_set_clkdiv_int_frac          (pio, sm, divN, divF);
 }
