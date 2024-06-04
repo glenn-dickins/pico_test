@@ -127,7 +127,7 @@ stall:
 
 public entry_point:
 .wrap_target
-    jmp pin entry_point     side 0b11   ; Wait for LRCLK to fall
+    jmp pin entry_point     side 0b11   ; Wait for LRCLK to fall                    ; TODO AN ISSUE HERE AS THIS WILL ALREADY BE THE CASE ON WRAP
 frame:
     wait 1 pin 0            side 0b11   ; Wait for BCLK
     wait 0 pin 0            side 0b11   ; Wait for BCLK to fall

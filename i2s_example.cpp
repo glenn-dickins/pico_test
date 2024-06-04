@@ -97,18 +97,20 @@ uint32_t inline deinterleave4(uint32_t x)
 }
 
 
+// TODO THIS IS WORKING FOR 16 BUT NOT FOR 8 - Some sort of block addressing issue
 
-#define ISR_BLOCK     8           // Number of samples at 48kHz that we lump into each ISR call
+#define ISR_BLOCK    4           // Number of samples at 48kHz that we lump into each ISR call
 
+int32_t   audio_i2s[4][2][ISR_BLOCK][2] __attribute__((aligned(2*2*ISR_BLOCK*4))) = { };    // Single line of normal rate I2S
 int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };    // One 8 ch TDM injest
 int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };    // Outut four lines of double rate I2S
-int32_t   audio_int[1][2][ISR_BLOCK][8] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };    // Interleaved I2S from the i2s_four_in
-int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                     // 8 channels of FIR buffer
+//int32_t   audio_int[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };    // Interleaved I2S from the i2s_four_in
+int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                    // 8 channels of FIR buffer
 
 using namespace DAES67;
 
-Histogram   isr_call("ISR Call Time", 0, 0.0002);
-Histogram   isr_exec("ISR Exec Time", 0, 0.0002);
+Histogram   isr_call("ISR Call Time", 0, 0.0001);
+Histogram   isr_exec("ISR Exec Time", 0, 0.0001);
 
 
 // Called when a full block of data has been written into audio_tdm
@@ -118,10 +120,10 @@ static void dma_handler(void)
     int64_t time = isr_call.time();                 // Mark the ISR call time and setup for
     isr_exec.start(time);                           // measuring execution time
 
-    int block = (void *)dma_hw->ch[0].read_addr >= &audio_out[0][1][0][0];       // Determine which double buffer to use
+    int block = (void *)dma_hw->ch[2].read_addr >= &audio_out[0][1][0][0];       // Determine which double buffer to use
 
 /*
-    // Deinterleave data from I2S four pin, into the tdm buffer     // About <2us per LRCLKS @300MHz
+    // Deinterleave data from I2S four pin, into the tdm buffer     // About 1.5us per LRCLK @300MHz
     uint32_t *pin  = (uint32_t *)&audio_int[0][block][0][0];
     uint8_t  *pout = (uint8_t  *)&audio_tdm[0][block][0][0];
     uint32_t word;
@@ -169,9 +171,20 @@ static void dma_handler(void)
         *(pout +31) = (word>>24)&0xFF;
         pout += 32;
     }
-    isr_exec.time();
 */
 
+
+    // Move the I2S data into the TDM buffers
+    {
+        int32_t *pin  = audio_i2s[0][block][0];
+        int32_t *pout = audio_tdm[0][block][0];
+        for (int n = 0; n < ISR_BLOCK; n++)
+        {
+            *pout++ = *pin++;
+            *pout++ = *pin++;
+            pout+=6;
+        }
+    }
 
     // Move all of the TDM data into the I2S data buffers and filter    // About 6us per LRCLK at @300MHz
     for (int n = 0; n < 8; n++)
@@ -181,45 +194,54 @@ static void dma_handler(void)
         for (int m=0; m<FILTER2X_TAPS-1; m++) pbuf[m]                 = pbuf[m+ISR_BLOCK];  // Move the FIR buffer along
         for (int m=0; m<ISR_BLOCK; m++)       pbuf[m+FILTER2X_TAPS-1] = pin[8*m] >> 8;      // Scale down and add new data
         filter2x(pbuf+FILTER2X_TAPS-1, &audio_out[n/2][block][0][n%2], ISR_BLOCK, 2);       // Filter and place into 2X buffer
+        //for (int m=0; m<ISR_BLOCK; m++) audio_out[n/2][block][0][n%2] = pin[8*m];
     }        
+    
+
+
+
     //audio_out[0][0][0][0] = 0xFFFFFFFF;           // Debugging marker
     
-//    isr_exec.time();
+    isr_exec.time();
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Create a DMA pair to manage a double buffered transfer
+//
+// Worth some notes here on RP2040
+// - It is not possible to self chain DMAs, thus if only using single DMAs per PIO, you need to retrigger
+//   in the interrupt
+// - For most cases of I2S or TDM, the interrupt does not happen fast enough to miss the first address
+//   increment of DMA, so this will skip samples
+// - When using chained DMAs, the first data DMA can use a ring, however I expereinced issues with a 
+//   ring size of 128, and thus have disabled it.  Leading to use a two word control block.
+//
 typedef enum { IN, OUT } dma_dir_t;
-int dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
+void dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
 {
-    static int32_t __aligned(4) Trigger[12];        // Set of addresses to keep as trigger
+    static int32_t __aligned(8) Trigger[12][2];                     // Set of addresses to keep as trigger
 
-    // The first DMA is doing the data transfer
-    dma_channel_config c = dma_channel_get_default_config(dma);
+    dma_channel_config c = dma_channel_get_default_config(dma);     // First DMA does the data transfer
     channel_config_set_read_increment    (&c,  dir == OUT);
     channel_config_set_write_increment   (&c, dir == IN );
-    channel_config_set_ring              (&c, dir == IN, log2(block*2*sizeof(int32_t)));    // Ring is 2x the block
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
     channel_config_set_dreq              (&c, pio_get_dreq(pio, sm, dir == OUT));
     channel_config_set_chain_to          (&c, dma+1);                       
     if (dir==OUT) dma_channel_configure(dma, &c, &pio->txf[sm], data, block, false);
     else          dma_channel_configure(dma, &c, data, &pio->rxf[sm], block, false);
 
-    if (dir==OUT) Trigger[dma+1] = (int32_t)(&pio->txf[sm]);
-    else          Trigger[dma+1] = (int32_t)(&pio->rxf[sm]);
+    Trigger[dma+1][0] = (int32_t)data;                              // The addresses of the double buffer
+    Trigger[dma+1][1] = (int32_t)(data + block);
 
-    c = dma_channel_get_default_config   (dma+1);
-    channel_config_set_read_increment    (&c,  false);
-    channel_config_set_write_increment   (&c, false);
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-    if (dir==OUT) dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al2_write_addr_trig, &Trigger[dma+1], 1, false);
-    else          dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al3_read_addr_trig,  &Trigger[dma+1], 1, false);
-
+    c = dma_channel_get_default_config   (dma+1);                   // The second DMA does the control block
+    channel_config_set_read_increment    (&c, true);                // updating the address after each data
+    channel_config_set_write_increment   (&c, false);               // set.  Addresses should be continuous
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);         // and effectice ring of 2 x block
+    channel_config_set_ring              (&c, false, 3);
+    if (dir==OUT) dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al3_read_addr_trig,  Trigger[dma+1], 1, false);
+    else          dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al2_write_addr_trig, Trigger[dma+1], 1, false);
     dma_channel_set_irq0_enabled(dma, interrupt);
-
-    return dma;
 }
-
-void core1(void) { while(1); };
 
 int main() 
 {
@@ -271,10 +293,9 @@ int main()
     printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIV_F / 256.0f))));
     
     // PIO0 is responsible for the input I2S or TDM
-    uint offset = pio_add_program (pio0, &tdm_in_program);
-    tdm_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    dma_setup  (0, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_tdm[0],  true);          // Interrupt each time receive block is done
-
+    uint offset = pio_add_program (pio0, &i2s_in_program);
+    i2s_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
+    dma_setup  (0, pio0, 0, IN,  2*ISR_BLOCK, (int32_t *)audio_i2s[0],  true);          // Interrupt each time receive block is done
 
     // PIO1 is responsible for the output double rate I2S
     offset = pio_add_program  (pio1, &i2s_double_out_program);
@@ -291,12 +312,27 @@ int main()
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
     irq_set_priority(DMA_IRQ_0, 0);                     // Make this the highest priority
-    dma_start_channel_mask(0b0101010101);               // Start all of the data DMAs
+    dma_start_channel_mask(0b1010101010);               // Start all of the data DMAs
 
     while ( gpio_get(I2S_LRCLK));                       // Wait for LR Clk to be low
     while (!gpio_get(I2S_LRCLK));                       // Wait for a rising edge - machine sync on first fall
     pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);   
+
+    printf("BUFFERS  I2S%p  TDM%p  OUT%p  BUF%p\n", audio_i2s, audio_tdm, audio_out, audio_buf);
+
+    uint32_t r1 = dma_hw->ch[2].read_addr - (int32_t)audio_out, w1 = dma_hw->ch[0].write_addr - (int32_t)audio_i2s;   
+    sleep_ms(1);
+    uint32_t r2 = dma_hw->ch[2].read_addr - (int32_t)audio_out, w2 = dma_hw->ch[0].write_addr - (int32_t)audio_i2s;   
+    sleep_ms(1);
+    uint32_t r3 = dma_hw->ch[2].read_addr - (int32_t)audio_out, w3 = dma_hw->ch[0].write_addr - (int32_t)audio_i2s;   
+    sleep_ms(1);
+    uint32_t r4 = dma_hw->ch[2].read_addr - (int32_t)audio_out, w4 = dma_hw->ch[0].write_addr - (int32_t)audio_i2s;   
+    printf("DMA ADDRESS  %3ld  %3ld  %ld\n",w1/2/4,r1/4/4,(r1/4/4-w1/2/4));
+    printf("DMA ADDRESS  %3ld  %3ld  %ld\n",w2/2/4,r2/4/4,(r2/4/4-w2/2/4));
+    printf("DMA ADDRESS  %3ld  %3ld  %ld\n",w3/2/4,r3/4/4,(r3/4/4-w3/2/4));
+    printf("DMA ADDRESS  %3ld  %3ld  %ld\n",w4/2/4,r4/4/4,(r4/4/4-w4/2/4));
+
 
     char str[8000];
     int64_t time = isr_call.now();
@@ -316,8 +352,9 @@ int main()
 
         for (int n=0; n<20; n++)
         {
-            uint32_t r = dma_hw->ch[0].read_addr - (int32_t)audio_out, w = dma_hw->ch[8].write_addr - (int32_t)audio_tdm;   
-            printf("DMA ADDRESS  %3ld  %3ld  %ld\n",r/4/4,w/2/4/4,(r/4/4-w/2/4/4)%(2*ISR_BLOCK));
+            uint32_t r = dma_hw->ch[2].read_addr - (int32_t)audio_out, w = dma_hw->ch[0].write_addr - (int32_t)audio_i2s;   
+            printf("DMA ADDRESS  %3ld  %3ld  %ld\n",w/2/4,r/4/4,(r/4/4-w/2/4));
+
         }
 
     }
