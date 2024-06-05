@@ -39,28 +39,14 @@ static uint8_t g_http_send_buf[ETHERNET_BUF_MAX_SIZE] = {};
 static uint8_t g_http_recv_buf[ETHERNET_BUF_MAX_SIZE] = {};
 static uint8_t g_http_socket_num_list[HTTP_SOCKET_MAX_NUM] = {0, 1, 2, 3};
 
-#define index_page  "<!DOCTYPE html>"\
-                    "<html lang=\"en\">"\
-                    "<head>"\
-                        "<meta charset=\"UTF-8\">"\
-                        "<title>HTTP Server Example</title>"\
-                    "</head>"\
-                    "<body>"\
-                        "<h1>Hello, World!</h1>"\
-                    "</body>"\
-                    "Well, I'll be damned.  A web server on the other core."\
-                    "</html>"
-
-
 
 extern Histogram   isr_call;
 extern Histogram   isr_exec;
 
 void core1(void)
 {
-    stdio_init_all(); 
-    sleep_ms(1000);
-    printf("CORE 1 ALIVE\n\n");
+    printf("**** CORE1 IS ALIVE  \n");
+    sleep_ms(2000);
 
     wizchip_spi_initialize();
     wizchip_cris_initialize();
@@ -73,35 +59,26 @@ void core1(void)
 
     httpServer_init(g_http_send_buf, g_http_recv_buf, HTTP_SOCKET_MAX_NUM, g_http_socket_num_list);
 
-    /* Get network information */
-    print_network_information(g_net_info);
+    //
+    print_network_information(g_net_info);          // This will stall waiting for a network
 
-    sleep_ms(2000);
+    char web_preamble[] = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>HTTP Server Example</title></head><body><h1>STATISTICS</h1><pre>";
+    char web_close[]    = "</pre></body></html>"; 
 
-    char str[16000] = { "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>HTTP Server Example</title></head>"\
-                        "<body><h1>STATISTICS</h1><pre>" };
-
-//    sprintf(str+strlen(str),"Time %lld\n",isr_call.now());
-//    isr_call.text(20, str);
-//    sprintf(str+strlen(str),"%s\n", str);
-//    isr_exec.text(20, str);
-//    sprintf(str+strlen(str),"%s\n\n", str);
-//    sprintf(str+strlen(str),"</pre></body></html>");
-
-    //printf(str);
-
-    sleep_ms(20000);
-
-    /* Register web page */
-    reg_httpServer_webContent((unsigned char*)"index.html", (unsigned char*)index_page);
-
-    // Infinite loop 
+    char page[8000];
+    char tmp[3000];
+    
     while (1)
     {
         for (int i = 0; i < HTTP_SOCKET_MAX_NUM; i++)
         {
-//            httpServer_run(i);
+            sprintf(page,"%s\nTime %lld\n",web_preamble,isr_call.now());
+            isr_call.text(20, tmp);
+            sprintf(page+strlen(page),"%s\n", tmp);
+            isr_exec.text(20, tmp);
+            sprintf(page+strlen(page),"%s\n\n%s", tmp,web_close);
+            reg_httpServer_webContent((unsigned char*)"index.html", (unsigned char*) page);
+            httpServer_run(i);
         }
-    }
-    
+    }    
 }

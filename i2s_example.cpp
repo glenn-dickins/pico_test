@@ -268,6 +268,8 @@ int main()
     printf("PIO CLOCK DIVIDER:        %2d + %3d/256\n", CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     printf("PIO CLOCK ACTUAL:           %10lld\n", (int64_t)(clock_get_hz(clk_sys) / ((float)CLK_PIO_DIV_N + ((float)CLK_PIO_DIV_F / 256.0f))));
     
+    for (int n=0; n<10; n++) dma_claim_unused_channel(true);
+
     // PIO0 is responsible for the input I2S or TDM
     //uint offset = pio_add_program (pio0, &i2s_in_program);
     //i2s_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
@@ -317,19 +319,6 @@ int main()
         .dns = {8, 8, 8, 8},                         // DNS server
         .dhcp = NETINFO_STATIC                       // DHCP enable/disable
     };
-
-#define index_page  "<!DOCTYPE html>"\
-                    "<html lang=\"en\">"\
-                    "<head>"\
-                        "<meta charset=\"UTF-8\">"\
-                        "<title>HTTP Server Example</title>"\
-                    "</head>"\
-                    "<body>"\
-                        "<h1>Hello, World!</h1>"\
-                    "</body>"\
-                    "Well, I'll be damned.  A web server on the other core."\
-                    "</html>"
-
 
     #define ETHERNET_BUF_MAX_SIZE (1024 * 2)
     #define HTTP_SOCKET_MAX_NUM 1
