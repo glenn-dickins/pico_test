@@ -29,7 +29,9 @@
 #include "hardware/irq.h"
 #include "hardware/pio.h"
 #include "hardware/vreg.h"
+#include "hardware/sync.h"
 #include "pico/stdlib.h"
+#include "hardware/flash.h"
 #include "i2s.pio.h"
 #include "histogram.hpp"
 #include "upsample.h"
@@ -190,8 +192,53 @@ void dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t
     dma_channel_set_irq0_enabled(dma, interrupt);
 }
 
-int main() 
+
+#define FLASH_TARGET_OFFSET (1792*1024)                                                         //++ Starting Flash Storage location after 1.8MB ( of the 2MB )
+const uint8_t *flash_target_contents = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);      //++ Pointer pointing at the Flash Address Location
+
+
+int main()
 {
+    set_sys_clock_khz(133000,false);
+    stdio_init_all();                                                                           //++ Initialize rp2040
+
+    sleep_ms(100);
+
+    printf("\n\n\n\n");
+    printf("\n System Starting..............\n");
+
+    sleep_ms(1000);
+
+    uint32_t flash_data[FLASH_PAGE_SIZE] = {};
+    uint32_t foffset = (2044*1024);
+
+    stdio_init_all();
+    sleep_ms(100);
+
+    typedef struct 
+    {
+        uint32_t    magic;
+        uint32_t    loads;
+    } flash_header_t;
+    flash_header_t *local;
+
+    local = (flash_header_t *)flash_data;
+
+    memcpy(flash_data,(const void*)(XIP_BASE + foffset),sizeof(flash_header_t));    
+    if (local->magic != 0x12345678) memset(flash_data,0,sizeof(flash_header_t));
+    local->magic = 0x12345678;
+    local->loads++;
+    
+    uint32_t interrupts = save_and_disable_interrupts();
+    flash_range_erase(foffset, FLASH_SECTOR_SIZE);
+    restore_interrupts(interrupts);   
+
+    sleep_ms(100);
+
+    interrupts = save_and_disable_interrupts();
+    flash_range_program(foffset,(const uint8_t *)flash_data, FLASH_PAGE_SIZE);
+    restore_interrupts(interrupts);   
+
 
     vreg_set_voltage(REG_VOLTAGE);
     stdio_init_all();
@@ -201,10 +248,13 @@ int main()
     printf("\n\nCHECKING CLOCK    %10ld %d %d %d %d\n", CLK_SYS, ret, vco, postdiv1, postdiv2);
     sleep_ms(200);
 
-    set_sys_clock_khz(CLK_SYS/1000, true);
+    set_sys_clock_khz(CLK_SYS/1000, false);
     stdio_init_all();
 
+    sleep_ms(100);
+
     printf("\n\n\n\n");
+    printf("BOOT NUMBER                 %10ld\n",local->loads);
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
     printf("SYSTEM CLOCK ACTUAL:        %10ld\n\n", clock_get_hz(clk_sys));
 

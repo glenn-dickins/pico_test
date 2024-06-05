@@ -22,7 +22,6 @@ cmake_minimum_required(VERSION 3.13)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-
 # Set standard CMake build type options
 ## Default C compiler flags
 set(CMAKE_C_FLAGS_DEBUG_INIT "-g3 -Og -Wall -Wextra -DDEBUG")
@@ -45,14 +44,22 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_ASM_FLAGS_RELWITHDEBINFO_INIT}" CACH
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
-project(i2s_example C CXX ASM)
+project(i2s_example C CXX ASM )
 pico_sdk_init()
+
+# Add -fpermissive to compiler options
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fpermissive")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
+
 
 message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 add_executable(i2s_example)
+
 target_sources(i2s_example PRIVATE i2s_example.cpp daes67/src/histogram.cpp daes67/src/log.cpp)
 
+
 target_include_directories(i2s_example PRIVATE ${CMAKE_CURRENT_LIST_DIR}/daes67/include)
+
 
 pico_generate_pio_header(i2s_example ${CMAKE_CURRENT_LIST_DIR}/i2s.pio)
 
@@ -66,10 +73,10 @@ pico_set_program_name(i2s_example "i2s_test")
 pico_set_program_version(i2s_example "1.0.1")
 
 # no_flash means the target is to run from RAM
-# pico_set_binary_type(i2s_test no_flash)
-
+# pico_set_binary_type(i2s_example no_flash)
 pico_enable_stdio_uart(i2s_example 1)
 pico_enable_stdio_usb(i2s_example 0)
+
 
 # Add the standard library to the build
 target_link_libraries(i2s_example pico_stdlib)
@@ -80,6 +87,8 @@ target_link_libraries(i2s_example
         hardware_dma
         hardware_pio
         hardware_clocks
+        hardware_flash
+        hardware_sync
         )
 
 pico_add_extra_outputs(i2s_example)
