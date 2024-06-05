@@ -1,3 +1,6 @@
 [submodule "daes67"]
 	path = daes67
 	url = git@github.com:dickinsaudio/daes67
+[submodule "RP2040-HAT-C"]
+	path = RP2040-HAT-C
+	url = https://github.com/Wiznet/RP2040-HAT-C

@@ -51,11 +51,15 @@ pico_sdk_init()
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fpermissive")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
 
+set(WIZNET_DIR ${CMAKE_SOURCE_DIR}/RP2040-HAT-C/libraries/ioLibrary_Driver)
+set(MBEDTLS_DIR ${CMAKE_SOURCE_DIR}/RP2040-HAT-C/libraries/mbedtls)
+set(PORT_DIR ${CMAKE_SOURCE_DIR}/RP2040-HAT-C/port)
+add_subdirectory(RP2040-HAT-C)
 
 message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 add_executable(i2s_example)
 
-target_sources(i2s_example PRIVATE i2s_example.cpp daes67/src/histogram.cpp daes67/src/log.cpp)
+target_sources(i2s_example PRIVATE i2s_example.cpp core1.cpp daes67/src/histogram.cpp daes67/src/log.cpp RP2040-HAT-C/port/ioLibrary_Driver/src/w5x00_spi.c RP2040-HAT-C/port/ioLibrary_Driver/src/w5x00_gpio_irq.c)
 
 
 target_include_directories(i2s_example PRIVATE ${CMAKE_CURRENT_LIST_DIR}/daes67/include)
@@ -89,6 +93,11 @@ target_link_libraries(i2s_example
         hardware_clocks
         hardware_flash
         hardware_sync
+        hardware_spi
+        pico_multicore
+        ETHERNET_FILES
+        IOLIBRARY_FILES
+        HTTPSERVER_FILES
         )
 
 pico_add_extra_outputs(i2s_example)

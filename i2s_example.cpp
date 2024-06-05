@@ -1,25 +1,3 @@
-/* i2s_examples.c
- *
- * Author: Daniel Collins
- * Date:   2022-02-25
- *
- * Copyright (c) 2022 Daniel Collins
- *
- * This file is part of rp2040_i2s_example.
- *
- * rp2040_i2s_example is free software: you can redistribute it and/or modify it under
- * the terms of the GNU General Public License, version 3 as published by the
- * Free Software Foundation.
- *
- * rp2040_i2s_example is distributed in the hope that it will
- * be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * rp2040_i2s_example. If not, see <https://www.gnu.org/licenses/>.
- */
-
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +9,7 @@
 #include "hardware/vreg.h"
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "hardware/flash.h"
 #include "i2s.pio.h"
 #include "histogram.hpp"
@@ -42,6 +21,14 @@
 #else
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #endif
+
+
+extern "C" {
+#include "port_common.h"
+#include "wizchip_conf.h"
+#include "w5x00_spi.h"
+#include "httpServer.h"
+}
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -196,32 +183,22 @@ void dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t
 #define FLASH_TARGET_OFFSET (1792*1024)                                                         //++ Starting Flash Storage location after 1.8MB ( of the 2MB )
 const uint8_t *flash_target_contents = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);      //++ Pointer pointing at the Flash Address Location
 
+void core1(void);
 
 int main()
 {
     set_sys_clock_khz(133000,false);
     stdio_init_all();                                                                           //++ Initialize rp2040
-
-    sleep_ms(100);
-
-    printf("\n\n\n\n");
-    printf("\n System Starting..............\n");
-
-    sleep_ms(1000);
+    sleep_ms(10);
 
     uint32_t flash_data[FLASH_PAGE_SIZE] = {};
     uint32_t foffset = (2044*1024);
-
-    stdio_init_all();
-    sleep_ms(100);
-
     typedef struct 
     {
         uint32_t    magic;
         uint32_t    loads;
     } flash_header_t;
     flash_header_t *local;
-
     local = (flash_header_t *)flash_data;
 
     memcpy(flash_data,(const void*)(XIP_BASE + foffset),sizeof(flash_header_t));    
@@ -230,13 +207,13 @@ int main()
     local->loads++;
     
     uint32_t interrupts = save_and_disable_interrupts();
-    flash_range_erase(foffset, FLASH_SECTOR_SIZE);
+//    flash_range_erase(foffset, FLASH_SECTOR_SIZE);
     restore_interrupts(interrupts);   
 
     sleep_ms(100);
 
     interrupts = save_and_disable_interrupts();
-    flash_range_program(foffset,(const uint8_t *)flash_data, FLASH_PAGE_SIZE);
+//    flash_range_program(foffset,(const uint8_t *)flash_data, FLASH_PAGE_SIZE);
     restore_interrupts(interrupts);   
 
 
@@ -246,12 +223,14 @@ int main()
     uint vco, postdiv1, postdiv2;
     int ret = check_sys_clock_khz(CLK_SYS/1000, &vco, &postdiv1, &postdiv2);
     printf("\n\nCHECKING CLOCK    %10ld %d %d %d %d\n", CLK_SYS, ret, vco, postdiv1, postdiv2);
-    sleep_ms(200);
+    sleep_ms(100);
 
     set_sys_clock_khz(CLK_SYS/1000, false);
     stdio_init_all();
 
     sleep_ms(100);
+
+//    multicore_launch_core1(&core1);
 
     printf("\n\n\n\n");
     printf("BOOT NUMBER                 %10ld\n",local->loads);
@@ -325,8 +304,74 @@ int main()
     pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);   
 
-    char str[8000];
+    
+
+    
+    
+    static wiz_NetInfo g_net_info =
+    {
+        .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
+        .ip = {10, 0, 0, 99},                     // IP address
+        .sn = {255, 255, 0, 0},                    // Subnet Mask
+        .gw = {10, 0, 0, 1},                     // Gateway
+        .dns = {8, 8, 8, 8},                         // DNS server
+        .dhcp = NETINFO_STATIC                       // DHCP enable/disable
+    };
+
+#define index_page  "<!DOCTYPE html>"\
+                    "<html lang=\"en\">"\
+                    "<head>"\
+                        "<meta charset=\"UTF-8\">"\
+                        "<title>HTTP Server Example</title>"\
+                    "</head>"\
+                    "<body>"\
+                        "<h1>Hello, World!</h1>"\
+                    "</body>"\
+                    "Well, I'll be damned.  A web server on the other core."\
+                    "</html>"
+
+
+    #define ETHERNET_BUF_MAX_SIZE (1024 * 2)
+    #define HTTP_SOCKET_MAX_NUM 1
+    static uint8_t g_http_send_buf[ETHERNET_BUF_MAX_SIZE] = {};
+    static uint8_t g_http_recv_buf[ETHERNET_BUF_MAX_SIZE] = {};
+    static uint8_t g_http_socket_num_list[HTTP_SOCKET_MAX_NUM] = {0};
+    wizchip_spi_initialize();
+    wizchip_cris_initialize();
+
+    wizchip_reset();
+    wizchip_initialize();
+    wizchip_check();
+
+    network_initialize(g_net_info);
+
+    httpServer_init(g_http_send_buf, g_http_recv_buf, HTTP_SOCKET_MAX_NUM, g_http_socket_num_list);
+
+    //
+    print_network_information(g_net_info);          // This will stall waiting for a network
+
+    char web_preamble[] = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>HTTP Server Example</title></head><body><h1>STATISTICS</h1><pre>";
+    char web_close[]    = "</pre></body></html>"; 
+
+    char page[8000];
+    char tmp[3000];
+    
+    while (1)
+    {
+        for (int i = 0; i < HTTP_SOCKET_MAX_NUM; i++)
+        {
+            sprintf(page,"%s\nTime %lld\n",web_preamble,isr_call.now());
+            isr_call.text(20, tmp);
+            sprintf(page+strlen(page),"%s\n", tmp);
+            isr_exec.text(20, tmp);
+            sprintf(page+strlen(page),"%s\n\n%s", tmp,web_close);
+            reg_httpServer_webContent((unsigned char*)"index.html", (unsigned char*) page);
+            httpServer_run(i);
+        }
+    }
+
     int64_t time = isr_call.now();
+    char str[8000];
     while(1)
     {
         gpio_put(LED_PIN, 1);
@@ -340,6 +385,9 @@ int main()
         printf("%s\n", str);
         isr_exec.text(20, str);
         printf("%s\n\n", str);
+
+        httpServer_run(0);
+
     }
 }
 
