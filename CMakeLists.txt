@@ -59,7 +59,7 @@ add_subdirectory(RP2040-HAT-C)
 message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 add_executable(i2s_example)
 
-target_sources(i2s_example PRIVATE i2s_example.cpp core1.cpp daes67/src/histogram.cpp daes67/src/log.cpp RP2040-HAT-C/port/ioLibrary_Driver/src/w5x00_spi.c RP2040-HAT-C/port/ioLibrary_Driver/src/w5x00_gpio_irq.c)
+target_sources(i2s_example PRIVATE i2s_example.cpp core1.cpp daes67/src/histogram.cpp daes67/src/log.cpp)
 
 
 target_include_directories(i2s_example PRIVATE ${CMAKE_CURRENT_LIST_DIR}/daes67/include)

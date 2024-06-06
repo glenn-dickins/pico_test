@@ -1,6 +1,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+extern "C" {
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/i2c.h"
@@ -12,24 +14,18 @@
 #include "pico/multicore.h"
 #include "hardware/flash.h"
 #include "i2s.pio.h"
+}
+
 #include "histogram.hpp"
 #include "upsample.h"
 #include "deinterleave.h"
+#include "udp_test.h"
 
 #ifndef PICO_DEFAULT_LED_PIN
 #warning blink example requires a board with a regular LED
 #else
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 #endif
-
-
-extern "C" {
-#include "port_common.h"
-#include "wizchip_conf.h"
-#include "w5x00_spi.h"
-#include "httpServer.h"
-}
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // This set of parameters is useful configuration, with notes
@@ -72,8 +68,6 @@ int32_t   audio_tdm[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))
 int32_t   audio_out[4][2][ISR_BLOCK][4] __attribute__((aligned(2*4*ISR_BLOCK*4))) = { };    // Outut four lines of double rate I2S
 int32_t   audio_int[1][2][ISR_BLOCK][8] __attribute__((aligned(2*8*ISR_BLOCK*4))) = { };    // Interleaved I2S from the i2s_four_in
 int32_t   audio_buf[8][ISR_BLOCK+FILTER2X_TAPS-1] = { };                                    // 8 channels of FIR buffer
-
-using namespace DAES67;
 
 Histogram   isr_call("ISR Call Time", 0, 0.0001);
 Histogram   isr_exec("ISR Exec Time", 0, 0.0001);
@@ -187,6 +181,7 @@ void core1(void);
 
 int main()
 {
+
     set_sys_clock_khz(133000,false);
     stdio_init_all();                                                                           //++ Initialize rp2040
     sleep_ms(10);
@@ -207,13 +202,13 @@ int main()
     local->loads++;
     
     uint32_t interrupts = save_and_disable_interrupts();
-//    flash_range_erase(foffset, FLASH_SECTOR_SIZE);
+    flash_range_erase(foffset, FLASH_SECTOR_SIZE);
     restore_interrupts(interrupts);   
 
     sleep_ms(100);
 
     interrupts = save_and_disable_interrupts();
-//    flash_range_program(foffset,(const uint8_t *)flash_data, FLASH_PAGE_SIZE);
+    flash_range_program(foffset,(const uint8_t *)flash_data, FLASH_PAGE_SIZE);
     restore_interrupts(interrupts);   
 
 
@@ -226,6 +221,8 @@ int main()
     sleep_ms(100);
 
     set_sys_clock_khz(CLK_SYS/1000, false);
+    uint32_t freq = clock_get_hz(clk_sys);
+    clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, freq, freq);        // Allow overclock of PERI
     stdio_init_all();
 
     sleep_ms(100);
@@ -235,11 +232,15 @@ int main()
     printf("\n\n\n\n");
     printf("BOOT NUMBER                 %10ld\n",local->loads);
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
-    printf("SYSTEM CLOCK ACTUAL:        %10ld\n\n", clock_get_hz(clk_sys));
+    printf("SYSTEM CLOCK ACTUAL:        %10ld\n", clock_get_hz(clk_sys));
 
     // Init GPIO LED
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    udp_test();
+
+/*
 
     // Setting up a PIO to be a slave at 48kHz, and then to double this and create a
     // clock suitable for 96kHz.  
@@ -377,6 +378,6 @@ int main()
 
         httpServer_run(0);
 
-    }
+    }*/
 }
 
