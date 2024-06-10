@@ -147,30 +147,35 @@ static void dma_handler(void)
 //   ring size of 128, and thus have disabled it.  Leading to use a two word control block.
 //
 typedef enum { IN, OUT } dma_dir_t;
-void dma_setup(int dma, pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
+int dma_setup(pio_hw_t *pio, int sm, dma_dir_t dir, int block, int32_t *data, bool interrupt = false)
 {
     static int32_t __aligned(8) Trigger[12][2];                     // Set of addresses to keep as trigger
 
-    dma_channel_config c = dma_channel_get_default_config(dma);     // First DMA does the data transfer
+    int dma1 = dma_claim_unused_channel(true);
+    int dma2 = dma_claim_unused_channel(true);
+
+    dma_channel_config c = dma_channel_get_default_config(dma1);    // First DMA does the data transfer
     channel_config_set_read_increment    (&c,  dir == OUT);
     channel_config_set_write_increment   (&c, dir == IN );
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
     channel_config_set_dreq              (&c, pio_get_dreq(pio, sm, dir == OUT));
-    channel_config_set_chain_to          (&c, dma+1);                       
-    if (dir==OUT) dma_channel_configure(dma, &c, &pio->txf[sm], data, block, false);
-    else          dma_channel_configure(dma, &c, data, &pio->rxf[sm], block, false);
+    channel_config_set_chain_to          (&c, dma2);                       
+    if (dir==OUT) dma_channel_configure(dma1, &c, &pio->txf[sm], data, block, false);
+    else          dma_channel_configure(dma1, &c, data, &pio->rxf[sm], block, false);
 
-    Trigger[dma+1][0] = (int32_t)data;                              // The addresses of the double buffer
-    Trigger[dma+1][1] = (int32_t)(data + block);
+    Trigger[dma2][0] = (int32_t)data;                              // The addresses of the double buffer
+    Trigger[dma2][1] = (int32_t)(data + block);
 
-    c = dma_channel_get_default_config   (dma+1);                   // The second DMA does the control block
+    c = dma_channel_get_default_config   (dma2);                    // The second DMA does the control block
     channel_config_set_read_increment    (&c, true);                // updating the address after each data
     channel_config_set_write_increment   (&c, false);               // set.  Addresses should be continuous
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);         // and effectice ring of 2 x block
     channel_config_set_ring              (&c, false, 3);
-    if (dir==OUT) dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al3_read_addr_trig,  Trigger[dma+1], 1, false);
-    else          dma_channel_configure  (dma+1, &c, &dma_hw->ch[dma].al2_write_addr_trig, Trigger[dma+1], 1, false);
-    dma_channel_set_irq0_enabled(dma, interrupt);
+    if (dir==OUT) dma_channel_configure  (dma2, &c, &dma_hw->ch[dma1].al3_read_addr_trig,  Trigger[dma2], 1, false);
+    else          dma_channel_configure  (dma2, &c, &dma_hw->ch[dma1].al2_write_addr_trig, Trigger[dma2], 1, false);
+    dma_channel_set_irq0_enabled(dma2, interrupt);
+
+    return dma1;
 }
 
 
@@ -282,8 +287,8 @@ int main()
 
     uint offset = pio_add_program (pio0, &i2s_four_in_program);
     i2s_four_in_init(pio0, 0, offset, I2S_LRCLK, I2S_DI0, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
-    dma_setup  (0, pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_int[0],  true);          // Interrupt each time receive block is done
-
+    int dma = dma_setup  (pio0, 0, IN,  8*ISR_BLOCK, (int32_t *)audio_int[0],  true);          // Interrupt each time receive block is done
+    printf("DMA FOR INPUT:              %10d\n", dma);
 
     // PIO1 is responsible for the output double rate I2S
     offset = pio_add_program  (pio1, &i2s_double_out_program);
@@ -292,10 +297,17 @@ int main()
     i2s_double_out_init       (pio1, 2, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO2, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
     i2s_double_out_init       (pio1, 3, offset, I2S_BCLK, I2S_2X_BCLK, I2S_2X_DO3, CLK_PIO_DIV_N, CLK_PIO_DIV_F);
 
-    dma_setup(2, pio1, 0, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[0]);                   // Dual data and control DMAs
-    dma_setup(4, pio1, 1, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[1]);
-    dma_setup(6, pio1, 2, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[2]);
-    dma_setup(8, pio1, 3, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[3]);
+    dma = dma_setup(pio1, 0, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[0]);                   // Dual data and control DMAs
+    printf("DMA FOR INPUT0:             %10d\n", dma);
+    dma = dma_setup(pio1, 1, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[1]);
+    printf("DMA FOR INPUT1:             %10d\n", dma);
+    dma = dma_setup(pio1, 2, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[2]);
+    printf("DMA FOR INPUT2:             %10d\n", dma);
+    dma = dma_setup(pio1, 3, OUT, 4*ISR_BLOCK, (int32_t *)audio_out[3]);
+    printf("DMA FOR INPUT3:             %10d\n", dma);
+
+
+//    multicore_launch_core1(&core1);
 
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
@@ -306,8 +318,6 @@ int main()
     while (!gpio_get(I2S_LRCLK));                       // Wait for a rising edge - machine sync on first fall
     pio_enable_sm_mask_in_sync(pio0_hw, 0b0001);
     pio_enable_sm_mask_in_sync(pio1_hw, 0b1111);   
-
-    
 
     
     

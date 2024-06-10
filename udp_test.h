@@ -83,8 +83,9 @@
 // 1|                                     XXXXXXXXXXXXXXXXXXXXXXXXXXXXX_XXXXXXXX   _X_    _   __X__
 //   -----------------------------------------------------------------------------------------------------
 //   0.0                                          0.0010                                            0.0020
-
-
+//
+// The main time is in retrieving the data from the W5500.
+// Using wiz_recv_ignore, it was feasible to handle about 7000pps incoming.  Could look at this in terms of 
 
 #include "histogram.hpp"
 
@@ -97,6 +98,30 @@ extern "C" {
 
 
 using namespace DAES67;
+
+#define SOCK 5
+
+int check_rsr()
+{
+
+    uint8_t req[3] = {0x00, 0x26, ((4*SOCK+1)<<3) + 0};      // Read two bytes from RSR register
+    uint16_t val = 0;
+
+//    WIZCHIP_CRITICAL_ENTER();
+    WIZCHIP.CS._select();
+    spi_write_blocking(SPI_PORT, req,   3);
+    spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)&val,2);
+    WIZCHIP.CS._deselect();
+//    WIZCHIP_CRITICAL_EXIT();
+
+    return ((val&0xFF)<<8) | (val>>8);
+}
+
+
+
+
+
+
 
 void udp_test(void)
 {
@@ -119,22 +144,32 @@ void udp_test(void)
 
     Histogram  Times("Packet Times",0,.002);
     Histogram  Sizes("Packet Size",0,2000);
-    uint32_t n=0;
-    uint32_t D=0;
     char buf[2048];
-    char str[8000];
+    char    str[8000];
     int64_t last = Times.now();
     while(1)
     {
         uint8_t addr[4];
         uint16_t port;
-        int ret = recvfrom(5, (unsigned char *)buf, sizeof(buf), addr, &port);
-        if (ret>0)
+        int len = check_rsr();
+        if (len==1168)
         {
+            uint16_t ptr = getSn_RX_RD(SOCK);
+            uint32_t addrsel = ((uint32_t)ptr << 8) + (WIZCHIP_RXBUF_BLOCK(SOCK) << 3);
+            uint8_t req[3] = { addrsel>>16, addrsel>>8, addrsel};
+
+            WIZCHIP.CS._select();
+            spi_write_blocking(SPI_PORT, req,   3);
+            spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,48*2*3);       // Simulate getting 2ch of data
+            WIZCHIP.CS._deselect();
+            ptr += len;
+            setSn_RX_RD(SOCK,ptr);
+
+
+//          wiz_recv_ignore(SOCK, len);
+            setSn_CR(SOCK,Sn_CR_RECV);
             Times.time();
-            Sizes.add(ret);
-            n++;
-            D+=ret;
+            Sizes.add(len);
         }
         if (Times.now() - last > 20000000000)
         {
