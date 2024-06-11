@@ -85,7 +85,56 @@
 //   0.0                                          0.0010                                            0.0020
 //
 // The main time is in retrieving the data from the W5500.
-// Using wiz_recv_ignore, it was feasible to handle about 7000pps incoming.  Could look at this in terms of 
+// Using wiz_recv_ignore, it was feasible to handle about 7000pps incoming.
+// If only taking 48 samples and 2ch data from a packet, it easily handles 4000pps.
+// Likely that it will be possible to manage 2x2 flows if done correctly.
+//
+//
+//
+// PACKET TIMES
+// 2|                X
+// 8|                X                                                                   |Packet Times   |
+// 0|                XX                                                                  |N         40000|
+// 4|                XX                                                                  |mean  3.229E-04|
+// 3|               xXX                                                                  |std   1.013E-05|
+//  |               XXX                                                                  |mode  3.214E-04|
+//  |               XXX                                                                  |min   2.510E-04|
+//  |               XXX                                                                  |max   1.611E-03|
+//  |               XXX
+//  |               XXX
+//  |             xXXXX
+//  |             XXXXX
+//  |             XXXXXx
+//  |             XXXXXX
+//  |             XXXXXX
+//  |            xXXXXXX Xx
+//  |            XXXXXXXXXXX
+// 1|            XXXXXXXXXXX                                                          _
+//   -----------------------------------------------------------------------------------------------------
+//   0.0                                          0.0010                                            0.0020
+
+// PACKET SIZES
+// 2|                                                          X_
+// 4|                                                          XX                        |Packet Size    |
+// 0|                                                          XX                        |N         40001|
+// 0|                                                          XX                        |mean  1.168E+03|
+// 0|                                                          XX                        |std   0.000E+00|
+//  |                                                          XX                        |mode  1.165E+03|
+//  |                                                          XX                        |min   1.168E+03|
+//  |                                                          XX                        |max   1.168E+03|
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+//  |                                                          XX
+// 1|                                                          XX
+//   -----------------------------------------------------------------------------------------------------
+//   0.0                                            1000                                              2000
+
 
 #include "histogram.hpp"
 
@@ -139,7 +188,18 @@ void udp_test(void)
     printf("IP ADDRESS        %d.%d.%d.%d\n", net_info.ip[0], net_info.ip[1], net_info.ip[2], net_info.ip[3]);
     printf("SPI BAUDRATE                %10d\n\n",   spi_get_baudrate(spi0));
 
-    printf("SOCKET OPEN     %d\n",socket(5, Sn_MR_UDP, 5000, SF_IO_NONBLOCK));
+    // int sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK);
+
+
+    uint8_t multicast_ip[4] = {239, 255, 54, 47};
+    uint8_t multicast_mac[6] = {0x01, 0x00, 0x5E, 255, 54, 47};
+    setSn_MR(SOCK, Sn_MR_UDP);
+    setSn_DHAR(SOCK, multicast_mac);	
+	setSn_DIPR(SOCK, multicast_ip);
+	setSn_DPORT(SOCK, 4321);
+    int sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK | Sn_MR_MULTI);
+
+    printf("SOCKET OPEN     %d\n",sock);
     printf("SOCKET STATUS   %d\n",getSn_SR(5));
 
     Histogram  Times("Packet Times",0,.002);
@@ -152,7 +212,7 @@ void udp_test(void)
         uint8_t addr[4];
         uint16_t port;
         int len = check_rsr();
-        if (len==1168)
+        if (len>100)
         {
             uint16_t ptr = getSn_RX_RD(SOCK);
             uint32_t addrsel = ((uint32_t)ptr << 8) + (WIZCHIP_RXBUF_BLOCK(SOCK) << 3);
