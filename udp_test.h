@@ -1,6 +1,10 @@
 //////////////////////////////////////////////////////////////////////
 // A routine for testing the UDP interface data rate on W5500
 //
+// TL;DR was able to get about 25Mbps effective from UDP traffic, and
+// depending on size handle about 8000pps.  This is more than enough for
+// AES67. 
+//
 // To create the stream to send to the device, use these.  Not sure why
 // the pps needs to be a bit higher, but these hit the 1ms packet rate.
 // These will send about 10,000 packets of the appropriate size and rate.
@@ -188,16 +192,21 @@ void udp_test(void)
     printf("IP ADDRESS        %d.%d.%d.%d\n", net_info.ip[0], net_info.ip[1], net_info.ip[2], net_info.ip[3]);
     printf("SPI BAUDRATE                %10d\n\n",   spi_get_baudrate(spi0));
 
-    // int sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK);
-
-
-    uint8_t multicast_ip[4] = {239, 255, 54, 47};
-    uint8_t multicast_mac[6] = {0x01, 0x00, 0x5E, 255, 54, 47};
-    setSn_MR(SOCK, Sn_MR_UDP);
-    setSn_DHAR(SOCK, multicast_mac);	
-	setSn_DIPR(SOCK, multicast_ip);
-	setSn_DPORT(SOCK, 4321);
-    int sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK | Sn_MR_MULTI);
+    int sock=0;
+    if (1)
+    {
+        sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK);
+    }
+    else
+    {
+        uint8_t multicast_ip[4] = {239, 255, 54, 47};
+        uint8_t multicast_mac[6] = {0x01, 0x00, 0x5E, 255, 54, 47};
+        setSn_MR(SOCK, Sn_MR_UDP);
+        setSn_DHAR(SOCK, multicast_mac);	
+    	setSn_DIPR(SOCK, multicast_ip);
+    	setSn_DPORT(SOCK, 4321);
+        sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK | Sn_MR_MULTI);
+    }
 
     printf("SOCKET OPEN     %d\n",sock);
     printf("SOCKET STATUS   %d\n",getSn_SR(5));
@@ -212,7 +221,7 @@ void udp_test(void)
         uint8_t addr[4];
         uint16_t port;
         int len = check_rsr();
-        if (len>100)
+        if (len>500)
         {
             uint16_t ptr = getSn_RX_RD(SOCK);
             uint32_t addrsel = ((uint32_t)ptr << 8) + (WIZCHIP_RXBUF_BLOCK(SOCK) << 3);
@@ -220,12 +229,11 @@ void udp_test(void)
 
             WIZCHIP.CS._select();
             spi_write_blocking(SPI_PORT, req,   3);
-            spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,48*2*3);       // Simulate getting 2ch of data
+//            spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,16*2*3);       // Simulate getting 2ch of data
+            spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,len);       // Get all data
             WIZCHIP.CS._deselect();
             ptr += len;
             setSn_RX_RD(SOCK,ptr);
-
-
 //          wiz_recv_ignore(SOCK, len);
             setSn_CR(SOCK,Sn_CR_RECV);
             Times.time();
@@ -241,5 +249,7 @@ void udp_test(void)
             Times.reset();
             Sizes.reset();
         }
+        sleep_us(50);
+
     }
 }
