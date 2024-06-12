@@ -146,7 +146,7 @@ void dante_test(void)
     // Now listen for responses
     int n = 0;
     int64_t start = time_us_64();
-    while((time_us_64()-start)<50000 && n<64) 
+    do
     {
         uint16_t port = 5353;
         uint8_t  ip[4] = {224,0,0,251};
@@ -156,13 +156,19 @@ void dante_test(void)
         {
             if (mdns_response(packet, len, name))
             {
-                printf("FOUND %02d %-20s at %d.%d.%d.%d\n", n+1, name, ip[0], ip[1], ip[2], ip[3]);
                 strcpy(dante_devices[n].name, name);
                 memcpy(dante_devices[n].ip, ip, sizeof(ip));
                 n++;
             }
         }
+    } while((time_us_64()-start)<250000 && n<64);
+
+    for (int i=0; i<n; i++)
+    {
+       printf("FOUND %02d %-20s at %d.%d.%d.%d\n", i+1, 
+            dante_devices[i].name, dante_devices[i].ip[0], dante_devices[i].ip[1], dante_devices[i].ip[2], dante_devices[i].ip[3]);
     }
+
     close(MDNS_TX);
     printf("\n\n");
 
