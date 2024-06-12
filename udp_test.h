@@ -173,46 +173,29 @@ int check_rsr()
 
 
 
-
-
-
-void udp_test(void)
+void udp_test(uint8_t ip[4], int port)
 {
-    wizchip_spi_initialize();           // NOTE MAKE SURE TO PATCH THIS TO BE 36Mhz not 5Mhz SPI
-    wizchip_cris_initialize();
-    wizchip_reset();
-    wizchip_initialize();
-    
-    static wiz_NetInfo net_info = { .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, 
-                                    .ip = {10, 0, 0, 99}, 
-                                    .sn = {255, 255, 0, 0}, .gw = {10, 0, 0, 1}, .dns { 1, 1, 1, 1 },
-                                    .dhcp = NETINFO_STATIC };
-    network_initialize(net_info);
-    ctlnetwork(CN_GET_NETINFO, (void *)&net_info);
-    printf("IP ADDRESS        %d.%d.%d.%d\n", net_info.ip[0], net_info.ip[1], net_info.ip[2], net_info.ip[3]);
-    printf("SPI BAUDRATE                %10d\n\n",   spi_get_baudrate(spi0));
-
+    printf("LISTENING TO  %d.%d.%d.%d:%d\n",ip[0],ip[1],ip[2],ip[3],port);
     int sock=0;
-    if (1)
+    if (0)
     {
         sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK);
     }
     else
     {
-        uint8_t multicast_ip[4] = {239, 255, 54, 47};
-        uint8_t multicast_mac[6] = {0x01, 0x00, 0x5E, 255, 54, 47};
+        uint8_t multicast_mac[6] = {0x01, 0x00, 0x5E, ip[1], ip[2], ip[3]};
         setSn_MR(SOCK, Sn_MR_UDP);
         setSn_DHAR(SOCK, multicast_mac);	
-    	setSn_DIPR(SOCK, multicast_ip);
-    	setSn_DPORT(SOCK, 4321);
-        sock = socket(SOCK, Sn_MR_UDP, 5000, SF_IO_NONBLOCK | Sn_MR_MULTI);
+    	setSn_DIPR(SOCK, ip);
+    	setSn_DPORT(SOCK, port);
+        sock = socket(SOCK, Sn_MR_UDP, port, SF_IO_NONBLOCK | Sn_MR_MULTI);
     }
 
     printf("SOCKET OPEN     %d\n",sock);
-    printf("SOCKET STATUS   %d\n",getSn_SR(5));
+    printf("SOCKET STATUS   %d\n\n\n",getSn_SR(5));
 
-    Histogram  Times("Packet Times",0,.002);
-    Histogram  Sizes("Packet Size",0,2000);
+    Histogram  Times("Packet Times",0,.001);
+    Histogram  Sizes("Packet Size",0,1000);
     char buf[2048];
     char    str[8000];
     int64_t last = Times.now();
@@ -221,7 +204,7 @@ void udp_test(void)
         uint8_t addr[4];
         uint16_t port;
         int len = check_rsr();
-        if (len>500)
+        if (len>100)
         {
             uint16_t ptr = getSn_RX_RD(SOCK);
             uint32_t addrsel = ((uint32_t)ptr << 8) + (WIZCHIP_RXBUF_BLOCK(SOCK) << 3);
@@ -229,12 +212,11 @@ void udp_test(void)
 
             WIZCHIP.CS._select();
             spi_write_blocking(SPI_PORT, req,   3);
-//            spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,16*2*3);       // Simulate getting 2ch of data
+//          spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,16*2*3);       // Simulate getting 2ch of data
             spi_read_blocking(SPI_PORT, 0x00, (uint8_t *)buf,len);       // Get all data
             WIZCHIP.CS._deselect();
             ptr += len;
             setSn_RX_RD(SOCK,ptr);
-//          wiz_recv_ignore(SOCK, len);
             setSn_CR(SOCK,Sn_CR_RECV);
             Times.time();
             Sizes.add(len);
@@ -242,14 +224,15 @@ void udp_test(void)
         if (Times.now() - last > 20000000000)
         {
             last = Times.now();    
-            Times.text(20, str);
+            printf("ELAPSED TIME %10lld us\n",time_us_64());
+            Times.text(15, str);
             printf("PACKET TIMES\n%s\n", str);
-            Sizes.text(20, str);
+            Sizes.text(15, str);
             printf("PACKET SIZES\n%s\n", str);
             Times.reset();
             Sizes.reset();
         }
-        sleep_us(50);
+        sleep_us(5);
 
     }
 }

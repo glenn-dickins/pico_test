@@ -238,13 +238,22 @@ int main()
     printf("\n\n\n\n");
     printf("BOOT NUMBER                 %10ld\n",local->loads);
     printf("SYSTEM CLOCK DESIRED:       %10ld\n", CLK_SYS);
-    printf("SYSTEM CLOCK ACTUAL:        %10ld\n", clock_get_hz(clk_sys));
+    printf("SYSTEM CLOCK ACTUAL:        %10ld\n\n", clock_get_hz(clk_sys));
 
     // Init GPIO LED
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
 
     dante_test();
+    for (int n=0; n<64; n++)
+    {
+        if (strcmp(dante_devices[n].name,"DESK-Alexa")==0)
+        {
+            printf("\n\nFOUND ALEXA\n");
+            printf("ELAPSED TIME %10lld us\n\n",time_us_64());
+            udp_test(dante_devices[n].mcast, 4321);
+        }
+    }
 
 /*
 

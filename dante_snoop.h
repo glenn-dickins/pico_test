@@ -90,8 +90,24 @@ int mdns_response(uint8_t *buf, int len, char* name)
 struct DanteDevice {
     char name[256];
     uint8_t ip[4];
-    uint8_t secondIp[4];
+    uint8_t mcast[4];
 };
+DanteDevice dante_devices[64];
+
+
+// This mod to allow the use of the polled burst spi_read and spi_write gives a 2X
+// boost in the SPI bandwidth and potential data rates to and from network.
+static void wizchip_read_burst(uint8_t *pBuf, uint16_t len)
+{
+    uint8_t tx_data = 0xFF;
+    spi_read_blocking(SPI_PORT, tx_data, pBuf, len);
+}
+
+static void wizchip_write_burst(uint8_t *pBuf, uint16_t len)
+{
+    spi_write_blocking(SPI_PORT, pBuf, len);
+}
+
 
 void dante_test(void)
 {
@@ -100,6 +116,10 @@ void dante_test(void)
     wizchip_reset();
     wizchip_initialize();
     
+    // Enable the burst read and write functions
+    WIZCHIP.IF.SPI._read_burst   = wizchip_read_burst;
+    WIZCHIP.IF.SPI._write_burst  = wizchip_write_burst;
+
     static wiz_NetInfo net_info = { .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, 
                                     .ip = {10, 0, 0, 99}, 
                                     .sn = {255, 255, 0, 0}, .gw = {10, 0, 0, 1}, .dns { 1, 1, 1, 1 },
@@ -124,8 +144,8 @@ void dante_test(void)
 
     // Now listen for responses
     int n = 0;
-    DanteDevice devices[64]; // Assuming a maximum of 10 devices
-    while(n<18)
+    int64_t start = time_us_64();
+    while((time_us_64()-start)<50000 && n<64) 
     {
         uint16_t port = 5353;
         uint8_t  ip[4] = {224,0,0,251};
@@ -133,17 +153,17 @@ void dante_test(void)
         int len = recvfrom(MDNS_TX, packet, sizeof(packet), ip, &port);
         if (len>0)
         {
-            if (mdns_response(packet, len, name) && n<64)
+            if (mdns_response(packet, len, name))
             {
                 printf("FOUND %02d %-20s at %d.%d.%d.%d\n", n+1, name, ip[0], ip[1], ip[2], ip[3]);
-                strcpy(devices[n].name, name);
-                memcpy(devices[n].ip, ip, sizeof(ip));
+                strcpy(dante_devices[n].name, name);
+                memcpy(dante_devices[n].ip, ip, sizeof(ip));
                 n++;
             }
         }
     }
     close(MDNS_TX);
-
+    printf("\n\n");
 
     // Now we have a list of devices, query each one to see if it has a multicast stream
     for (int i=0; i<n; i++)
@@ -152,8 +172,8 @@ void dante_test(void)
         uint8_t  ip[4];
         uint8_t query[] = { 0x27, 0x29, 0x00, 0x10, 0x09, 0x35, 0x22, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00 };
         socket(MDNS_RX, Sn_MR_UDP, 1000, SF_IO_NONBLOCK);
-        printf("Querying %s\n", devices[i].name);
-        sendto(MDNS_RX, query, sizeof(query), devices[i].ip, 4440);
+        printf("Querying %s\n", dante_devices[i].name);
+        sendto(MDNS_RX, query, sizeof(query), dante_devices[i].ip, 4440);
         sleep_ms(20);
         int len = recvfrom(MDNS_RX, packet, sizeof(packet), ip, &port);
         char *p = (char *)packet;
@@ -164,7 +184,11 @@ void dante_test(void)
             {
                 if (*p==255)
                 {
-                    printf("FOUND MULTICAST %s at %d.%d.%d.%d\n", devices[i].name, 239, 255, p[1], p[2]);
+                    printf("FOUND MULTICAST %s at %d.%d.%d.%d\n", dante_devices[i].name, 239, 255, p[1], p[2]);
+                    dante_devices[i].mcast[0] = 239;
+                    dante_devices[i].mcast[1] = 255;
+                    dante_devices[i].mcast[2] = p[1];
+                    dante_devices[i].mcast[3] = p[2];
                 }
             }
         }
