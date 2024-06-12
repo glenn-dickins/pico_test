@@ -251,7 +251,7 @@ int main()
         {
             printf("\n\nFOUND ALEXA\n");
             printf("ELAPSED TIME %10lld us\n\n",time_us_64());
-            udp_test(dante_devices[n].mcast, 4321);
+            udp_test(dante_devices[n].mcast_ip, dante_devices[n].mcast_port);
         }
     }
 

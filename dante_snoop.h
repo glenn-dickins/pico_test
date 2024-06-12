@@ -90,7 +90,8 @@ int mdns_response(uint8_t *buf, int len, char* name)
 struct DanteDevice {
     char name[256];
     uint8_t ip[4];
-    uint8_t mcast[4];
+    uint8_t mcast_ip[4];
+    uint16_t mcast_port;
 };
 DanteDevice dante_devices[64];
 
@@ -185,10 +186,11 @@ void dante_test(void)
                 if (*p==255)
                 {
                     printf("FOUND MULTICAST %s at %d.%d.%d.%d\n", dante_devices[i].name, 239, 255, p[1], p[2]);
-                    dante_devices[i].mcast[0] = 239;
-                    dante_devices[i].mcast[1] = 255;
-                    dante_devices[i].mcast[2] = p[1];
-                    dante_devices[i].mcast[3] = p[2];
+                    dante_devices[i].mcast_ip[0] = 239;
+                    dante_devices[i].mcast_ip[1] = 255;
+                    dante_devices[i].mcast_ip[2] = p[1];
+                    dante_devices[i].mcast_ip[3] = p[2];
+                    dante_devices[i].mcast_port = (p[-3]<<8) + p[-2];
                 }
             }
         }
